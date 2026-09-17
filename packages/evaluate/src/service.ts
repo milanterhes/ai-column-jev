@@ -1,5 +1,6 @@
 import { Context, Duration, Effect, Layer, Schedule } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import * as RateLimiter from "effect/unstable/persistence/RateLimiter"
 import {
   buildRequest,
   failedResult,
@@ -8,6 +9,7 @@ import {
   type AiColumn,
   type EvaluationResult
 } from "./core.ts"
+import { JEV_RATE_LIMIT_KEY, RateLimiterLive, withAdaptiveRateLimit } from "./limiter.ts"
 
 /**
  * The evaluation service: the seam between the app and Jev.
@@ -84,6 +86,9 @@ export const EvaluationServiceLive: Layer.Layer<
     const config = yield* JevConfig
     // Captured at construction so the method carries no client requirement.
     const client = yield* HttpClient.HttpClient
+    // Captured at construction too: the limiter's store is built once here and
+    // shared by every call, so the service's own shape stays requirement-free.
+    const limiter = yield* RateLimiter.RateLimiter
     const url = endpoint(config.baseUrl)
 
     const callOnce = (payload: unknown): Effect.Effect<Attempt, EvaluationError> =>
@@ -94,9 +99,13 @@ export const EvaluationServiceLive: Layer.Layer<
           HttpClientRequest.bodyJsonUnsafe(payload)
         )
 
-        const response = yield* client
-          .execute(request)
-          .pipe(Effect.mapError(() => new EvaluationError("transport failure", true)))
+        const response = yield* withAdaptiveRateLimit(
+          limiter,
+          client
+            .execute(request)
+            .pipe(Effect.mapError(() => new EvaluationError("transport failure", true))),
+          { key: JEV_RATE_LIMIT_KEY }
+        )
 
         const status = response.status
 
@@ -142,4 +151,4 @@ export const EvaluationServiceLive: Layer.Layer<
 
     return { evaluate }
   })
-)
+).pipe(Layer.provide(RateLimiterLive))

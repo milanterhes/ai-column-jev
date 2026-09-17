@@ -17,6 +17,11 @@
     "lint": "tsc --noEmit",
     "verify": "node src/verify.ts"
   },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "effect": "catalog:",
+    "redis": "^6.2.1"
+  },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
