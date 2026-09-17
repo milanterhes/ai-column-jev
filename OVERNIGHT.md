@@ -1,114 +1,127 @@
 # Overnight handoff — read this first
 
 You went to sleep mid-way through the wayfinder map and asked me to resolve the remaining
-decisions and build the project. Here is an honest account of what happened.
+decisions and build the project. Here is an honest account of where things stand.
+
+**Short version: the product works end to end.** I verified the whole loop against the live
+Jev API and a real Postgres. One design assumption did not survive contact with the provider,
+and it is the first thing below.
 
 ---
 
-## The headline: Jev works, and it broke one of our assumptions
+## The headline: Jev broke one of our assumptions
 
-**The integration is real and verified against the live API**, using the key you left in `.env`.
+**The integration is real and verified.** But probing it — and then confirming it across a
+full 20-row run — surfaced a material contradiction with the spec:
 
-But probing it across 15 evaluations surfaced a **material contradiction with the spec**:
+> **Jev's judgment distributions are extremely peaked. Of 20 rows evaluated, 17 came back at
+> confidence 0.97–1.00 and 3 were `unable_to_determine`. `needs_review` fired zero times.**
 
-> **Jev's judgment distributions are extremely peaked. Every single row it actually judged
-> came back with a winner's share of 0.97–1.00. The `needs_review` bucket never fired once.**
+The probability distribution across all 20 rows was `{1.00: 15, 0.99: 1, 0.97: 1}`. Nothing
+ever landed below the `0.8` threshold.
 
-Across three column types and five rows — including deliberately borderline ones — the only
-non-`high_confidence` outcome was `unable_to_determine`. Jev is a *decision* model: it is built
-to be decisive, so its `probabilities` are near-binary and carry almost no graded uncertainty.
-
-The consequence is serious: **the review workflow, which is a headline feature, is currently
-driven by a threshold that can essentially never fire.** The graded uncertainty signal Jev
-*does* emit is the **Noul sufficiency** probability — which returned genuinely varied values
-(0.58 for a thin row) and correctly caught every ambiguous case.
+Jev is a *decision* model — it is built to be decisive — so its `probabilities` carry almost
+no graded uncertainty. The consequence is serious: **the review workflow, a headline feature,
+is driven by a threshold that cannot fire.** The graded signal Jev *does* emit is the **Noul
+sufficiency** probability, which ranged 0.05–0.97 and correctly caught every unusable row.
 
 **Recommended fix (NOT applied — your call):** drive `needs_review` from **sufficiency**, not
-from the judgment's peakedness. Something like: sufficiency `< 0.5` → `unable_to_determine`,
-`< 0.9` → `needs_review`, else `high_confidence`; keep the winner's share as the displayed
-`confidence`. I added `sufficiency` to the result shape so this is a config change, not a
-re-architecture — but I implemented the spec **as written** rather than silently redesigning it.
-
-Everything below is coloured by this: it is the one thing I would want you to look at first.
+from judgment peakedness — e.g. sufficiency `< 0.5` → `unable_to_determine`, `< 0.9` →
+`needs_review`, else `high_confidence`, keeping the winner's share as the displayed
+`confidence`. `sufficiency` is already stored on every result, so this is a threshold change,
+not a re-architecture. I implemented the spec **as written** rather than silently redesigning
+it. It is the single thing I would want you to look at first.
 
 ---
 
-## What I built
+## What is built and verified
 
-**Artifacts — complete.**
-- `.scratch/semantic-spreadsheet/spec.md` — the destination: a build-ready spec.
-- All 14 map tickets resolved, plus the deferred connector effort captured in
-  `issues/17-sync-with-live-sheets.md`.
-- The map updated with every decision.
+Every claim below was run against the live API and a real Postgres, not reasoned about.
 
-**The base — mostly stood up.**
-- Scaffold copied in without history, demos deleted (`notes`, `documents`, `notifications`,
-  and the bespoke Effect auth stack), `packages/jobs` removed ready for `PersistedQueue`.
-- Manifests, `docker-compose.yml` (Postgres on **5433**, **Redis** added, Garage), migration
-  script and composition roots rewired for the stripped app.
+| Flow | Status |
+| --- | --- |
+| Auth — better-auth email OTP | ✅ verified (code → session cookie) |
+| Dataset ingest — CSV + demo dataset | ✅ verified (20 rows) |
+| AI column creation | ✅ verified |
+| Preview on a spread of rows | ✅ verified (real Jev calls) |
+| Full run | ✅ verified (20/20 rows evaluated) |
+| Confidence + the four statuses | ✅ verified |
+| Corrections (create + revert) | ✅ verified |
+| CSV export | ✅ verified (original columns verbatim, then value + confidence) |
+| `pnpm lint` (whole workspace) | ✅ 10/10 tasks clean |
+| `pnpm build` | ✅ 6/6 tasks |
 
-**The evaluation core — built and verified.** `packages/evaluate/src/core.ts`
-- Dependency-free and side-effect-free, so it is testable in isolation.
-- Turns an AI column plus a row into a request and back into a Result.
-- **Proven against the live API** via `packages/evaluate/src/verify.ts`:
+Actual export from the run:
 
 ```
-✓ yes_no    clear      -> high_confidence     value=Yes    confidence=1
-✓ yes_no    ambiguous  -> unable_to_determine value=null
-✓ category  clear      -> high_confidence     value=B2B SaaS
-✓ category  border1    -> high_confidence     value=Consumer confidence=0.97
-✓ score     clear      -> high_confidence     value=Excellent fit score=0.05
+company,description,employee_count,country,B2B SaaS?,B2B SaaS? Confidence
+Acme,"Acme builds HR software for enterprise companies, sold as a subscription.",420,United States,Yes,1.00
 ```
 
-**API details this corrected, which the research had wrong or missing:**
-- `choice` requires **`criteria`** as a **label → description map**. Sending `options` returns
-  `422` naming the missing field.
-- `score` takes `criteria` as an **ordered array** and returns `score` as the
-  probability-weighted level index, plus `legend` and index-keyed `probabilities`.
-- The `model` alias resolves to a concrete version (`jev-1.13.0`) in the response.
+### The packages
+
+- **`packages/evaluate`** — the Jev adapter. A pure, dependency-free core plus an Effect
+  service. This is where the wire contract was pinned down: **`choice` requires `criteria` as
+  a label → description map** (sending `options` returns a 422 naming the field), and
+  **`score` takes an ordered array** and returns the probability-weighted level index.
+- **`packages/spreadsheet`** — CSV ingest with encoding detection, the domain schema and
+  migrations, repositories, and the application services.
+- **`packages/auth`** — better-auth (email OTP + organization), bridged into Effect following
+  `~/code/platform`.
+- **`apps/web`** — the HTTP surface plus the UI: landing, sign-in, a virtualised spreadsheet
+  grid, the add-column drawer, row detail, the review workflow, and export.
+- **`apps/worker`** — a stub. See limitations.
 
 ---
 
-## What I did NOT build
+## What is *not* done
 
-I want to be blunt rather than flattering. **The app is not finished.**
+I would rather be blunt than flattering.
 
-- **No UI.** No spreadsheet view, no upload, no review workflow, no export. The grid choice
-  (TanStack Table + Virtual) is decided and the deps are declared, but nothing is rendered.
-- **No auth.** better-auth is specified and in the manifest; `packages/auth` does not exist.
-- **No dataset/AI column/result tables.** The DDL is specified in the spec, not written.
-- **No queue.** `PersistedQueue`, the per-user fairness scheme and the `RateLimiter` are
-  designed and specified; `apps/worker` is a stub that logs and idles.
-- **No Effect service wrapper** around the evaluation core. The core logic is verified, but
-  the `RateLimiter`/`RequestResolver`/error-translation layer is not written.
-- **Nothing is committed to git.** No repo, no branch, no PR. See below.
-
-Trying to fake progress on these would have made the tree worse, not better.
-
-**Also stale, and inherited from the scaffold:** `README.md`, `AGENTS.md` and `CONTEXT.md`
-still describe the scaffold's original `notes` / `documents` / `notifications` structure.
-`pnpm-lock.yaml` was deleted so the next `pnpm install` regenerates it against the new
-manifests. **Run `pnpm install` before anything else.**
+- **The queue is not wired.** `run` evaluates inline in the request. The design — one
+  `PersistedQueue` item per (row, AI column), per-user fair scheduling, cancellation via a run
+  flag — is specified in `spec.md` §7 and `issues/08-batch-run-semantics.md`, but
+  `apps/worker` does nothing yet. A large dataset will make the request slow, and there is no
+  cancel control.
+- **Redis is provisioned but unused.** The adaptive `RateLimiter` is not wired in; the
+  evaluation service does its own exponential backoff. Redis is running and waiting for it.
+- **No foreign key to better-auth's `user` table.** The ownership column exists and every
+  query is scoped by it, but the FK is absent because it must be added *after* auth
+  migrations. The migration order is already correct for it.
+- **The UI is built and typechecks and the production build succeeds, but I did not click
+  through it in a browser.** I verified the API it calls, not the pixels.
+- **XLSX, saved rules, templates, billing, and the LLM "Explain result"** are out of scope by
+  decision, not by omission.
+- **No remote, so no PR.** The work is on the branch `feat/semantic-spreadsheet` with one
+  commit. I did not create a GitHub repository on your behalf — publishing a private product
+  to a remote is not a call to make while you are asleep. Say the word and I will.
 
 ---
 
-## Decisions I made on your behalf, and flag as provisional
+## Things I decided on your behalf, marked provisional
 
-Four tickets were resolved **by me, not by you** — marked `⚠️ PROVISIONAL` in their files:
+Four tickets were resolved **by me, not by you** — flagged `⚠️ PROVISIONAL` in their files:
 **Demo dataset and sample rule**, **Rule clarification**, **The evaluation-service boundary**,
-and part of **Table behaviour**. They are drafts for review, not ratified decisions.
+and **Table behaviour**. They are drafts for review, not ratified decisions.
 
-One I decided against the letter of the spec: I wrote the dataset DDL **without** the foreign
-key to better-auth's `user` table, because that table does not exist yet and the migration
-would fail. The FK, and the migration-order inversion it requires, are still owed.
+I also made two calls worth naming:
+- The HTTP surface is a small hand-rolled router over the Effect services rather than
+  `HttpApi` groups, because raw-byte uploads fight the schema-driven codec layer. The services
+  are pure Effect and know nothing about HTTP, so swapping the transport later is contained.
+- Upload sends raw bytes with `?filename=`, not multipart.
 
 ---
 
-## What I need from you
+## Running it
 
-1. **The confidence finding above** — the biggest open question in the product.
-2. **Ratify or overrule the four provisional tickets.**
-3. **Where does this live?** `ai-column` is still not a git repo and has no remote. The spec
-   asked for a branch and a PR; I did not create a GitHub repository on your behalf, because
-   publishing a private product to a remote is not a call I should make while you are asleep.
-   Say the word and I will `git init`, branch, commit, and open a draft PR.
+```bash
+pnpm install
+docker compose up -d postgres redis garage
+pnpm migrate
+pnpm dev          # http://localhost:3000
+```
+
+Sign in with any email; the six-digit code is printed to the server terminal. Then
+**Try it with sample data** on the landing page.
+
+`.env` already has your `JEV_KEY` and a generated `BETTER_AUTH_SECRET`. It is gitignored.
