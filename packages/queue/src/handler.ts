@@ -61,10 +61,51 @@ export const handleRow = (
       return
     }
 
+    const evaluator = yield* EvaluationService
+
+    // A chunk: build one request for every row in it, then fan the answers
+    // back out. Terminal failures are written per row, and a chunk that fails
+    // outright fails whole — the queue retries it.
+    if (work.rowIds.length > 1) {
+      const chunk = yield* repo.findWorkRows(work.rowIds)
+      if (chunk.length === 0) return
+
+      const results = yield* evaluator
+        .evaluateMany(toEvaluationColumn(column), chunk)
+        .pipe(
+          Effect.catchIf(
+            (error): error is EvaluationError => error instanceof EvaluationError,
+            (error): Effect.Effect<ReadonlyMap<string, EvaluatedRow>, EvaluationError> =>
+              error.retryable && attempt + 1 < config.maxAttempts
+                ? Effect.sleep(backoffFor(config, attempt)).pipe(Effect.andThen(Effect.fail(error)))
+                : Effect.succeed(new Map<string, EvaluatedRow>())
+          )
+        )
+
+      yield* Effect.forEach(
+        chunk,
+        (row) => {
+          const evaluated = results.get(row.id)
+          return upsertResult({
+            aiColumnId: column.id,
+            rowId: row.id,
+            selectedValue: evaluated?.result.selectedValue ?? null,
+            confidence: evaluated?.result.confidence ?? null,
+            providerConfidence: evaluated?.result.providerConfidence ?? null,
+            sufficiency: evaluated?.result.sufficiency ?? null,
+            status: evaluated?.result.status ?? "failed",
+            criteriaVersion: column.criteria_version,
+            detail: evaluated?.result.detail ?? null,
+            providerResponse: evaluated?.providerResponse ?? { error: "no answer in batch" }
+          })
+        },
+        { discard: true }
+      )
+      return
+    }
+
     const row = yield* repo.findWorkRow(work.rowId)
     if (row === null) return
-
-    const evaluator = yield* EvaluationService
 
     const outcome = yield* evaluator.evaluate(toEvaluationColumn(column), row.data).pipe(
       Effect.map((evaluated): RowOutcome => ({ _tag: "evaluated", evaluated })),

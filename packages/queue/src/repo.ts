@@ -69,6 +69,19 @@ export const findWorkColumn = (id: string) =>
     return rows.length === 0 ? null : decodeColumn(rows[0]!)
   })
 
+export const findWorkRows = (rowIds: ReadonlyArray<string>) =>
+  Effect.gen(function*() {
+    if (rowIds.length === 0) return []
+    const sql = yield* SqlClient.SqlClient
+    const rows = yield* sql`
+      SELECT id, data FROM dataset_row WHERE id = ANY(${rowIds})
+    `
+    return rows.map((row) => ({
+      id: String(row["id"]),
+      data: (row["data"] ?? {}) as Record<string, unknown>
+    }))
+  })
+
 export const findWorkRow = (id: string) =>
   Effect.gen(function*() {
     const sql = yield* SqlClient.SqlClient

@@ -149,3 +149,53 @@ T05 and T16 can begin.
 - **Preview still evaluates inline.** The spec says it should go through the queue as interactive-class work. At ten rows it is fast enough that this has not bitten, but it is a deviation.
 
 **One design flaw, stated rather than hidden:** an audit row the user *ignores* currently counts as agreed, which inflates the estimate. The report says so and calls the figure an upper bound. Fixing it properly needs an explicit confirm action on audit rows.
+
+
+---
+
+## Status, second pass
+
+**T12 shipped, and it changed the ranking.** The spike (below) showed row
+batching beats question fan-out as the first lever, so it went in first:
+
+| 50 rows | input tokens | latency |
+| --- | --- | --- |
+| one call per row | 24,165 | 14,245 ms |
+| **one call, 50 rows, one question each** | **13,429** | **355 ms** |
+
+1.8x cheaper, ~40x faster, answers still attributable per row, proven to N=200.
+
+**Implemented:** bulk runs are chunked at 100 rows per request. Interactive work
+stays one row per item, so a preview is never stuck behind a chunk — the `kind`
+field already distinguished the two. Verified live: a 35-row run is now **one
+queue item** and completes in under 4 seconds, and each row still stores its own
+trimmed provider response rather than losing it to the batch.
+
+**The ceiling is request byte size, not the 32k token budget.** N=240 succeeds
+at ~65k tokens; N=250 hard-fails with HTTP 400 and returns *nothing*. Failure is
+all-or-nothing, so chunks must be sized conservatively and a chunk failure is
+retryable. 100 is the number with room for the sufficiency question.
+
+**T17 shipped.** Every provider call goes through the Redis-backed adaptive
+`RateLimiter`, reporting status and `Retry-After` back so the limit is learned.
+Verified: a 429 with `Retry-After: 200ms` puts the limiter into cooldown for
+200ms. Falls back to in-memory on a missing or dead Redis.
+
+### Still not done
+
+| # | Ticket | Why it matters |
+| --- | --- | --- |
+| **T04/T05** | **A column carries a set of questions** | The foundation for composites and suggestions. Note the scope correction below. |
+| T06–T08 | Composites, speculative suggestions, question-set UI | Depends on T04/T05 |
+| T11 | Saved rules, re-applied | The recurring-work path. Retention |
+| T13–T15 | Escalation, entity resolution, explain-this-result | |
+| T18 | Foreign key to `user` | Ownership is enforced in every query; the FK is still absent |
+| T20 | Connector sync | Deferred by decision |
+
+**A scope correction worth recording.** T05 as originally written — "one call
+per row carrying *every column's* questions" — would have changed the run model,
+because a queue item would no longer belong to one column. The version that
+shipped is **within a column**: one call carries all of a column's questions.
+That keeps the run and cancel model intact, delivers the measured win, and is
+still the foundation composites need. Cross-column grouping is a further
+optimisation and should be measured before it is built.
