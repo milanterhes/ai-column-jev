@@ -2,6 +2,7 @@ import { NodeHttpClient } from "@effect/platform-node"
 import { PgLive } from "@app/core"
 import { createAuth } from "@app/auth/server"
 import { EvaluationServiceLive, JevConfig } from "@app/evaluate"
+import { PersistedQueueFactoryLive, PersistedQueueStoreLive } from "@app/queue"
 import { Layer, ManagedRuntime } from "effect"
 import { Pool } from "pg"
 import { loadEnv } from "./env"
@@ -37,7 +38,13 @@ const EvalLive = EvaluationServiceLive.pipe(
   Layer.provide(Layer.mergeAll(JevConfigLive, NodeHttpClient.layerUndici))
 )
 
-const ApiLive = EvalLive.pipe(Layer.provideMerge(PgLive)) as unknown as Layer.Layer<never, never, never>
+// Enqueuing needs the queue's own layers, sitting on the same Postgres client
+// the rest of the app uses.
+const QueueLive = PersistedQueueFactoryLive.pipe(Layer.provide(PersistedQueueStoreLive))
+
+const ApiLive = Layer.mergeAll(EvalLive, QueueLive).pipe(
+  Layer.provideMerge(PgLive)
+) as unknown as Layer.Layer<never, never, never>
 
 export const apiRuntime = ManagedRuntime.make(ApiLive)
 

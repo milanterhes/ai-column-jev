@@ -54,6 +54,7 @@ export const AiColumn = Schema.Struct({
   type: ColumnType,
   instruction: Schema.String,
   labels: Schema.Array(Label),
+  criteria_version: Schema.Number,
   ordered: Schema.Boolean,
   needs_review_threshold: Schema.Number,
   created_at: Schema.Date
@@ -69,8 +70,10 @@ export const Result = Schema.Struct({
   provider_confidence: Schema.NullOr(Schema.Number),
   sufficiency: Schema.NullOr(Schema.Number),
   status: ResultStatus,
+  criteria_version: Schema.Number,
   detail: Schema.NullOr(Schema.Unknown),
   provider_response: Schema.NullOr(Schema.Unknown),
+  in_audit: Schema.Boolean,
   created_at: Schema.Date
 })
 export type Result = Schema.Schema.Type<typeof Result>

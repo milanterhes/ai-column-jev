@@ -6,18 +6,32 @@
  * Deliberately dependency-free and side-effect-free so it can be tested and
  * verified in isolation. The Effect service in `./service.ts` wraps it.
  *
- * Shapes here are not guesses: they were verified against the live
- * `https://api.typesafe.ai/v1/systemone` endpoint. In particular `choice`
- * requires `criteria` as a **label -> description map** (sending `options`
- * returns 422), and `score` requires `criteria` as an **ordered array** of
- * level descriptions.
+ * Two things here are the difference between a vague question and a specified
+ * one, and both are documented in the TypeSafe docs:
+ *
+ * 1. **Structured criteria.** Choice options and Noul branches accept an object
+ *    with `what`, `not_for` and `examples`. Defining what an answer means — and
+ *    what it is *not for* — is what stops "the row contains no feature request"
+ *    from reading as "I cannot tell".
+ * 2. **Decomposed state.** The row is sent as a structured object, and each
+ *    question names the fields it inspects, so a question is never confused
+ *    about which part of the row it is judging.
  */
 
 export type ColumnType = "yes_no" | "category" | "score"
 
 export interface Label {
   readonly name: string
+  /** Plain description. Used when the structured fields below are absent. */
   readonly description?: string | undefined
+  /** What belongs in this option. */
+  readonly what?: string | undefined
+  /** What belongs in a neighbouring option instead. */
+  readonly notFor?: string | undefined
+  /** Representative rows. This is the few-shot channel. */
+  readonly examples?: ReadonlyArray<string> | undefined
+  /** Score levels only: observable signals of this level. */
+  readonly signals?: ReadonlyArray<string> | undefined
 }
 
 /** A user-facing AI column. One shape for all three types. */
@@ -38,16 +52,11 @@ export interface DistributionEntry {
 export interface EvaluationResult {
   /** A label name, or null when the row could not be judged. */
   readonly selectedValue: string | null
-  /** The winner's share, computed by us. Null when there is no answer. */
+  /** Our confidence measure. Null when there is no answer. */
   readonly confidence: number | null
   /** Jev's own `confidence`, kept for later comparison. Null when absent. */
   readonly providerConfidence: number | null
-  /**
-   * The Noul sufficiency probability, 0..1. **This is the only graded
-   * uncertainty Jev actually emits** — its judgment distributions are peaked by
-   * design, so `confidence` is empirically near 1 for every row it judges. See
-   * `FINDINGS.md`. Null when the sufficiency question was not answered.
-   */
+  /** The Noul sufficiency probability, 0..1. */
   readonly sufficiency: number | null
   readonly status: ResultStatus
   readonly distribution: ReadonlyArray<DistributionEntry>
@@ -68,71 +77,153 @@ export const SUFFICIENCY_ID = "sufficiency"
  * more than ~0.97 and put rich, plainly judgeable messages in the 0.4–0.8 band.
  * The clean separation in that sample is between genuinely unusable rows
  * (`"help"` 0.08, `" "` 0.06, `"The sync is broken."` 0.20) and ordinary
- * content (0.37 and up). A gate at 0.5 discarded real rows — an invoice bug
- * scoring 0.49 was thrown away. 0.3 sits in the empty gap.
+ * content (0.37 and up). A gate at 0.5 discarded real rows. 0.3 sits in the gap.
  *
  * Re-measure before trusting this on a different corpus.
  */
 export const SUFFICIENCY_MIN = 0.3
 
+/**
+ * Thresholds are per primitive, because the confidence scales are not the same
+ * shape. A Noul's confidence is a probability of the selected answer (0.5–1.0),
+ * so its floor sits close to a coin flip. A Choice or Score's confidence is a
+ * winner's share (0–1.0), where a low value means genuinely split options.
+ */
 export const DEFAULT_NEEDS_REVIEW_THRESHOLD = 0.8
+export const DEFAULT_YES_NO_THRESHOLD = 0.6
+
+export const defaultThresholdFor = (type: ColumnType): number =>
+  type === "yes_no" ? DEFAULT_YES_NO_THRESHOLD : DEFAULT_NEEDS_REVIEW_THRESHOLD
 
 // ---------------------------------------------------------------------------
 // Request
 // ---------------------------------------------------------------------------
 
 /**
- * Render a whole row into Jev's `state`. The spec sends the entire row: the
- * instruction may reference any column, and a narrower rule would be a guess
- * that can silently change a judgment.
+ * Render a whole row for the `state`. Structure is preferred over a flattened
+ * string: the docs are explicit that a row is already JSON and that
+ * serialising it into a string template throws away the labels the model could
+ * have used to tell fields apart.
  */
-export const renderState = (row: Readonly<Record<string, unknown>>): string =>
-  Object.entries(row)
-    .map(([key, value]) => `${key}: ${value === null || value === undefined ? "" : String(value)}`)
-    .join("\n")
+export const renderState = (row: Readonly<Record<string, unknown>>): Record<string, unknown> => {
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(row)) {
+    out[key] = value === null || value === undefined ? "" : value
+  }
+  return out
+}
 
-const sufficiencyInstruction = (instruction: string): string =>
-  `Is there enough information here to answer the following question? ${instruction}`
+const inspectHint = (row: Readonly<Record<string, unknown>>): string => {
+  const keys = Object.keys(row)
+  return keys.length === 0 ? "" : keys.map((key) => `\`${key}\``).join(", ")
+}
+
+const instructions = (question: string, row: Readonly<Record<string, unknown>>) => {
+  const inspect = inspectHint(row)
+  return inspect === "" ? { question } : { question, inspect }
+}
+
+/** A Choice option, or a Noul branch. `not_for` is where the boundary lives. */
+const optionCriteria = (label: Label) => ({
+  what: label.what ?? label.description ?? label.name,
+  ...(label.notFor === undefined ? {} : { not_for: label.notFor }),
+  ...(label.examples === undefined || label.examples.length === 0
+    ? {}
+    : { examples: [...label.examples] })
+})
 
 export interface JevRequest {
-  readonly state: string
+  readonly state: Record<string, unknown>
   readonly model: string
   readonly questions: Record<string, unknown>
 }
+
+/**
+ * Build the judgment question for a column.
+ *
+ * **Yes/No uses Noul, not a two-option Choice.** A binary Choice collapses to a
+ * near-certain distribution — every judged row in the sample returned 0.96–1.00
+ * — so a threshold on it can never fire and `needs_review` is unreachable for
+ * the most common column type. Noul returns a graded probability on the same
+ * rows (0.58, 0.44, 0.09), which is the signal the review queue needs.
+ */
+const judgmentQuestion = (
+  column: AiColumn,
+  row: Readonly<Record<string, unknown>>
+): Record<string, unknown> => {
+  const [first, second] = column.labels
+
+  if (column.type === "yes_no") {
+    return {
+      type: "noul",
+      instructions: instructions(column.instruction, row),
+      criteria: {
+        true: optionCriteria(first ?? { name: "Yes" }),
+        false: optionCriteria(second ?? { name: "No" })
+      }
+    }
+  }
+
+  if (column.type === "score") {
+    return {
+      type: "score",
+      instructions: instructions(column.instruction, row),
+      criteria: column.labels.map((label) => ({
+        summary: label.name,
+        ...(label.what === undefined && label.description === undefined
+          ? {}
+          : { what: label.what ?? label.description }),
+        ...(label.signals === undefined ? {} : { signals: [...label.signals] })
+      }))
+    }
+  }
+
+  return {
+    type: "choice",
+    instructions: instructions(column.instruction, row),
+    criteria: Object.fromEntries(column.labels.map((label) => [label.name, optionCriteria(label)]))
+  }
+}
+
+/**
+ * The sufficiency check. Structured for the same reason as the judgment: the
+ * `false` branch says explicitly that an absence of something is a defined
+ * answer, not an unknown.
+ */
+const sufficiencyQuestion = (column: AiColumn): Record<string, unknown> => ({
+  type: "noul",
+  instructions: {
+    question: `Does the state contain what is needed to answer the question below?`,
+    question_under_test: column.instruction,
+    note: "Judge whether the relevant content is present and specific enough. Do not judge the answer itself."
+  },
+  criteria: {
+    true: {
+      what:
+        "The state contains the content the question needs — enough to give a definite answer, even if that answer is negative",
+      examples: ["A specific description of what the customer wants or what is broken"]
+    },
+    false: {
+      what: "The content the question needs is absent, empty, or too vague to judge",
+      not_for:
+        "A row that plainly contains no instance of the thing asked about is NOT missing information — that is a definite negative answer",
+      examples: ["An empty message", "A single word such as 'help'", "Placeholder text with no substance"]
+    }
+  }
+})
 
 export const buildRequest = (
   column: AiColumn,
   row: Readonly<Record<string, unknown>>,
   model = "jev-latest"
-): JevRequest => {
-  const judgment = column.type === "score"
-    ? {
-        type: "score",
-        instructions: column.instruction,
-        // Score criteria are an ORDERED array of level descriptions.
-        criteria: column.labels.map((label) => label.name)
-      }
-    : {
-        type: "choice",
-        instructions: column.instruction,
-        // Choice criteria are a MAP of label -> description.
-        criteria: Object.fromEntries(
-          column.labels.map((label) => [label.name, label.description ?? label.name])
-        )
-      }
-
-  return {
-    state: renderState(row),
-    model,
-    questions: {
-      [JUDGMENT_ID]: judgment,
-      [SUFFICIENCY_ID]: {
-        type: "noul",
-        instructions: sufficiencyInstruction(column.instruction)
-      }
-    }
+): JevRequest => ({
+  state: renderState(row),
+  model,
+  questions: {
+    [JUDGMENT_ID]: judgmentQuestion(column, row),
+    [SUFFICIENCY_ID]: sufficiencyQuestion(column)
   }
-}
+})
 
 // ---------------------------------------------------------------------------
 // Response
@@ -171,13 +262,27 @@ const winnerShare = (distribution: ReadonlyArray<DistributionEntry>): number | n
   distribution.length === 0 ? null : distribution[0]!.probability
 
 /**
+ * Confidence for a Noul: **the probability of the answer we selected.**
+ *
+ * Not `|p − 0.5| × 2`. Measured on 27 real rows, Jev's Noul probability is
+ * compressed toward 0.5 — it returned 0.65 for "Please add a Slack
+ * integration", an unmistakable yes. Squeezing that into 0..1 produced "30%
+ * confident" on the clearest positive in the set, which both reads as alarming
+ * and makes a 0.8 threshold flag 41% of rows.
+ *
+ * The selected answer's probability runs 0.5–1.0, reads naturally ("Yes 65%"),
+ * and — measured on the same rows — separates the one model error (0.52) from
+ * every correct answer (0.61 and up).
+ */
+export const noulConfidence = (p: number, selectedIsYes: boolean): number =>
+  selectedIsYes ? p : 1 - p
+
+/**
  * Turn a provider response into a Result.
  *
  * - A sufficiency answer below `SUFFICIENCY_MIN` means the row is
- *   `unable_to_determine` and **the judgment is discarded** — never surfaced as
- *   a value, per the decision "What confidence means".
- * - Confidence is the **winner's share**, computed by us, not Jev's own
- *   `confidence` (which is still recorded for later comparison).
+ *   `unable_to_determine` and **the judgment is discarded**.
+ * - Confidence is our own measure, not Jev's (which is still recorded).
  */
 export const parseResponse = (
   column: AiColumn,
@@ -207,8 +312,30 @@ export const parseResponse = (
   if (sufficiency === undefined || (sufficiency.noul ?? 1) < SUFFICIENCY_MIN) return unable()
   if (judgment === undefined) return unable()
 
+  // ── Yes/No via Noul ───────────────────────────────────────────────────────
+  if (judgment.type === "noul") {
+    const p = judgment.noul ?? 0.5
+    const yes = column.labels[0]?.name ?? "Yes"
+    const no = column.labels[1]?.name ?? "No"
+    const selectedIsYes = p >= 0.5
+    const confidence = noulConfidence(p, selectedIsYes)
+    return {
+      selectedValue: selectedIsYes ? yes : no,
+      confidence,
+      providerConfidence: judgment.confidence ?? null,
+      sufficiency: sufficiency.noul ?? null,
+      status: confidence >= threshold ? "high_confidence" : "needs_review",
+      distribution: [
+        { label: yes, probability: p },
+        { label: no, probability: 1 - p }
+      ].sort((a, b) => b.probability - a.probability),
+      detail: null,
+      usage
+    }
+  }
+
+  // ── Score ─────────────────────────────────────────────────────────────────
   if (judgment.type === "score") {
-    // Score probabilities are keyed by level INDEX; our labels are that order.
     const byIndex = Object.entries(judgment.probabilities ?? {}).map(([index, probability]) => {
       const position = Number(index)
       const label = column.labels[position]?.name ?? judgment.legend?.[index] ?? index
@@ -231,6 +358,7 @@ export const parseResponse = (
     }
   }
 
+  // ── Category via Choice ───────────────────────────────────────────────────
   const distribution = toDistribution(judgment.probabilities)
   const confidence = winnerShare(distribution) ?? 0
   const selected = judgment.choice ?? distribution[0]?.label ?? null

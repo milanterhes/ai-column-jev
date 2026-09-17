@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
 import { SqlClient, SqlError } from "effect/unstable/sql"
-import { EvaluationError, EvaluationService } from "@app/evaluate"
+import { EvaluationError, EvaluationService, defaultThresholdFor } from "@app/evaluate"
 import type { AiColumn as EvaluationColumn, Label as EvaluationLabel } from "@app/evaluate"
 import { parseCsv, toRowObject, type ParsedCsv } from "./csv.ts"
 import * as repo from "./repo.ts"
@@ -182,7 +182,7 @@ export const createAiColumn = (
       type: input.type,
       instruction: input.instruction.trim(),
       labels,
-      needsReviewThreshold: input.needsReviewThreshold ?? 0.8
+      needsReviewThreshold: input.needsReviewThreshold ?? defaultThresholdFor(input.type)
     })
 
     return {
@@ -191,7 +191,7 @@ export const createAiColumn = (
       type: input.type,
       instruction: input.instruction.trim(),
       labels,
-      needsReviewThreshold: input.needsReviewThreshold ?? 0.8
+      needsReviewThreshold: input.needsReviewThreshold ?? defaultThresholdFor(input.type)
     }
   })
 
@@ -246,6 +246,7 @@ const evaluateRows = (
               providerConfidence: evaluated.result.providerConfidence,
               sufficiency: evaluated.result.sufficiency,
               status: evaluated.result.status,
+              criteriaVersion: column.criteria_version,
               detail: evaluated.result.detail,
               providerResponse: evaluated.providerResponse
             })
@@ -294,6 +295,25 @@ export const runColumn = (userId: string, datasetId: string, columnId: string) =
     )
     yield* repo.finishBatchRun(runId, "completed")
     return { runId, totalRows: rows.length }
+  })
+
+/**
+ * Create a run and hand back the rows to enqueue, without evaluating anything.
+ *
+ * The queue lives in its own package and depends on this one, so the web app
+ * owns the join: it prepares the run here and enqueues there. That keeps the
+ * domain free of any knowledge that a queue exists.
+ */
+export const prepareRun = (userId: string, datasetId: string, columnId: string) =>
+  Effect.gen(function*() {
+    const dataset = yield* repo.findDataset(userId, datasetId)
+    if (dataset === null) return yield* Effect.fail(notFound("Dataset not found."))
+    const column = yield* repo.findAiColumn(datasetId, columnId)
+    if (column === null) return yield* Effect.fail(notFound("Column not found."))
+
+    const rows = yield* repo.listRows(datasetId)
+    const runId = yield* repo.insertBatchRun({ aiColumnId: columnId, totalRows: rows.length })
+    return { runId, rowIds: rows.map((row) => row.id), totalRows: rows.length }
   })
 
 export const getResults = (userId: string, datasetId: string, columnId: string) =>
@@ -378,6 +398,190 @@ export const countResults = (userId: string, datasetId: string, columnId: string
     const dataset = yield* repo.findDataset(userId, datasetId)
     if (dataset === null) return yield* Effect.fail(notFound("Dataset not found."))
     return yield* repo.countResultsByStatus(columnId)
+  })
+
+// ── The column report ───────────────────────────────────────────────────────
+
+/**
+ * Answers "how good is this column?" — the question every serious buyer asks,
+ * and the one nobody answers honestly.
+ *
+ * Two numbers, always reported separately:
+ *
+ * - **Agreement on reviewed rows** is a fact about the review queue. People
+ *   review uncertain rows first, so it is biased *downward* and must never be
+ *   presented as accuracy on its own.
+ * - **Audit accuracy** comes from a random sample of rows the user never
+ *   looked at. It is the only unbiased estimate, and it is the headline.
+ */
+export interface ColumnReport {
+  readonly total: number
+  readonly judged: number
+  readonly unusable: number
+  readonly failed: number
+  readonly baseRate: ReadonlyArray<{ readonly label: string; readonly share: number }>
+  readonly reviewed: {
+    readonly total: number
+    readonly agreed: number
+    readonly rate: number | null
+    readonly byClass: ReadonlyArray<{
+      readonly label: string
+      readonly total: number
+      readonly agreed: number
+      readonly rate: number | null
+    }>
+  }
+  readonly buckets: ReadonlyArray<{
+    readonly range: string
+    readonly total: number
+    readonly agreed: number
+    readonly rate: number | null
+  }>
+  readonly audit: { readonly total: number; readonly agreed: number; readonly rate: number | null } | null
+  readonly disagreements: ReadonlyArray<{
+    readonly rowId: string
+    readonly model: string | null
+    readonly human: string
+    readonly confidence: number | null
+  }>
+  readonly warnings: ReadonlyArray<string>
+}
+
+const rate = (n: number, d: number): number | null => (d === 0 ? null : n / d)
+
+export const getColumnReport = (userId: string, datasetId: string, columnId: string) =>
+  Effect.gen(function*() {
+    const dataset = yield* repo.findDataset(userId, datasetId)
+    if (dataset === null) return yield* Effect.fail(notFound("Dataset not found."))
+    const column = yield* repo.findAiColumn(datasetId, columnId)
+    if (column === null) return yield* Effect.fail(notFound("Column not found."))
+
+    const [results, corrections] = yield* Effect.all(
+      [repo.listResults(columnId), repo.listCorrections(columnId)],
+      { concurrency: 2 }
+    )
+    const correctionByRow = new Map(corrections.map((c) => [c.row_id, c.value]))
+
+    const judgedRows = results.filter(
+      (r) => r.status !== "unable_to_determine" && r.status !== "failed"
+    )
+    const unusable = results.filter((r) => r.status === "unable_to_determine").length
+    const failed = results.filter((r) => r.status === "failed").length
+
+    // Base rate. Without it, "85% accurate" describes a model that always says
+    // the same thing.
+    const counts = new Map<string, number>()
+    for (const r of judgedRows) {
+      const label = r.selected_value ?? "(none)"
+      counts.set(label, (counts.get(label) ?? 0) + 1)
+    }
+    const baseRate = [...counts.entries()]
+      .map(([label, count]) => ({ label, share: judgedRows.length === 0 ? 0 : count / judgedRows.length }))
+      .sort((a, b) => b.share - a.share)
+
+    // Agreement, only where a human actually said something.
+    const reviewed = judgedRows.filter((r) => correctionByRow.has(r.row_id))
+    const agreedRows = reviewed.filter((r) => r.selected_value === correctionByRow.get(r.row_id))
+
+    const classLabels = [...new Set(reviewed.map((r) => correctionByRow.get(r.row_id)!))]
+    const byClass = classLabels.map((label) => {
+      const inClass = reviewed.filter((r) => correctionByRow.get(r.row_id) === label)
+      const agreed = inClass.filter((r) => r.selected_value === label).length
+      return { label, total: inClass.length, agreed, rate: rate(agreed, inClass.length) }
+    })
+
+    const buckets = [
+      { range: "under 0.60", test: (c: number) => c < 0.6 },
+      { range: "0.60 – 0.79", test: (c: number) => c >= 0.6 && c < 0.8 },
+      { range: "0.80 – 0.94", test: (c: number) => c >= 0.8 && c < 0.95 },
+      { range: "0.95 – 1.00", test: (c: number) => c >= 0.95 }
+    ].map((bucket) => {
+      const inBucket = reviewed.filter(
+        (r) => r.confidence !== null && bucket.test(r.confidence)
+      )
+      const agreed = inBucket.filter((r) => r.selected_value === correctionByRow.get(r.row_id)).length
+      return { range: bucket.range, total: inBucket.length, agreed, rate: rate(agreed, inBucket.length) }
+    }).filter((b) => b.total > 0)
+
+    const auditRows = judgedRows.filter((r) => r.in_audit)
+    const auditAgreed = auditRows.filter(
+      (r) => {
+        const human = correctionByRow.get(r.row_id)
+        return human === undefined ? true : human === r.selected_value
+      }
+    ).length
+    const audit =
+      auditRows.length === 0
+        ? null
+        : { total: auditRows.length, agreed: auditAgreed, rate: rate(auditAgreed, auditRows.length) }
+
+    const disagreements = reviewed
+      .filter((r) => r.selected_value !== correctionByRow.get(r.row_id))
+      .slice(0, 20)
+      .map((r) => ({
+        rowId: r.row_id,
+        model: r.selected_value,
+        human: correctionByRow.get(r.row_id)!,
+        confidence: r.confidence
+      }))
+
+    const warnings: string[] = []
+    if (baseRate.length > 0 && baseRate[0]!.share >= 0.7) {
+      warnings.push(
+        `${Math.round(baseRate[0]!.share * 100)}% of judged rows are "${baseRate[0]!.label}". ` +
+          `Overall agreement is close to what "always say ${baseRate[0]!.label}" would score, so read the per-class figures instead.`
+      )
+    }
+    if (audit === null) {
+      warnings.push(
+        "No audit has been run, so there is no unbiased accuracy estimate. " +
+          "Agreement below is measured on rows you chose to review, which skews toward the hard cases."
+      )
+    } else if (corrections.length === 0) {
+      // Known limitation, stated rather than hidden: we cannot yet tell a row
+      // the user confirmed from one they ignored, so an un-actioned audit row
+      // counts as agreed. That inflates the estimate.
+      warnings.push(
+        `The audit assumes rows you did not change were correct. ` +
+          `Until you actually review those ${audit.total} rows, treat this figure as an upper bound.`
+      )
+    }
+    if (reviewed.length < 10) {
+      warnings.push(`Only ${reviewed.length} reviewed rows — too few to say much.`)
+    }
+
+    return {
+      total: results.length,
+      judged: judgedRows.length,
+      unusable,
+      failed,
+      baseRate,
+      reviewed: {
+        total: reviewed.length,
+        agreed: agreedRows.length,
+        rate: rate(agreedRows.length, reviewed.length),
+        byClass
+      },
+      buckets,
+      audit,
+      disagreements,
+      warnings
+    }
+  })
+
+export const startAudit = (
+  userId: string,
+  datasetId: string,
+  columnId: string,
+  count: number
+) =>
+  Effect.gen(function*() {
+    const dataset = yield* repo.findDataset(userId, datasetId)
+    if (dataset === null) return yield* Effect.fail(notFound("Dataset not found."))
+    const column = yield* repo.findAiColumn(datasetId, columnId)
+    if (column === null) return yield* Effect.fail(notFound("Column not found."))
+    const sampled = yield* repo.markAuditSample(columnId, Math.max(5, Math.min(count, 200)))
+    return { sampled }
   })
 
 // ── Export ──────────────────────────────────────────────────────────────────
@@ -523,15 +727,40 @@ const DEMO_COLUMNS: ReadonlyArray<{
   readonly name: string
   readonly type: "yes_no" | "category" | "score"
   readonly instruction: string
-  readonly labels: ReadonlyArray<{ readonly name: string; readonly description: string }>
+  readonly labels: ReadonlyArray<{
+    readonly name: string
+    readonly description?: string
+    readonly what?: string
+    readonly notFor?: string
+    readonly examples?: ReadonlyArray<string>
+    readonly signals?: ReadonlyArray<string>
+  }>
 }> = [
   {
     name: "Feature request?",
     type: "yes_no",
     instruction: "Is this customer asking for functionality that does not exist yet?",
     labels: [
-      { name: "Yes", description: "The customer is asking for functionality that does not exist yet." },
-      { name: "No", description: "The customer is not asking for new functionality." }
+      {
+        name: "Yes",
+        what: "Asks for something the product cannot do yet",
+        examples: [
+          "Please add a Slack integration",
+          "We need SAML SSO before we can roll this out",
+          "Dark mode would genuinely help"
+        ]
+      },
+      {
+        name: "No",
+        what: "Anything else — bug reports, questions, billing, churn, praise",
+        notFor:
+          "A bug report or a question is a definite NO, not missing information. Only mark this row unusable if the message is empty or too vague to have any content at all.",
+        examples: [
+          "Login is bouncing me back to the sign-in page",
+          "We were billed twice this month",
+          "What are the rate limits on the read API?"
+        ]
+      }
     ]
   },
   {
@@ -539,12 +768,42 @@ const DEMO_COLUMNS: ReadonlyArray<{
     type: "category",
     instruction: "What kind of issue is this?",
     labels: [
-      { name: "Bug", description: "Something that should work is broken or produces wrong output." },
-      { name: "Feature request", description: "A request for functionality that does not exist yet." },
-      { name: "Question", description: "A request for information, documentation or process." },
-      { name: "Billing", description: "Anything about charges, invoices, refunds or plans." },
-      { name: "Performance", description: "Slowness, timeouts or resource problems." },
-      { name: "Praise", description: "Positive feedback with no request attached." }
+      {
+        name: "Bug",
+        what: "Something that should work is broken or produces wrong output",
+        notFor: "A request for new functionality, or a question about how something works",
+        examples: ["Every invoice dated the 1st shows the previous day", "Export contains duplicate rows"]
+      },
+      {
+        name: "Feature request",
+        what: "A request for functionality that does not exist yet",
+        notFor: "A report that something existing is broken",
+        examples: ["Please add a Slack integration", "Dark mode would help"]
+      },
+      {
+        name: "Question",
+        what: "A request for information, documentation or process",
+        notFor: "A report of broken behaviour",
+        examples: ["What are the API rate limits?", "Who do I send a security questionnaire to?"]
+      },
+      {
+        name: "Billing",
+        what: "Anything about charges, invoices, refunds or plans",
+        notFor: "General pricing questions from someone evaluating the product",
+        examples: ["We were billed twice this month", "Please refund the duplicate charge"]
+      },
+      {
+        name: "Performance",
+        what: "Slowness, timeouts or resource problems",
+        notFor: "A functional bug that happens to be annoying",
+        examples: ["Dashboard takes 30 seconds to load", "Large exports time out"]
+      },
+      {
+        name: "Praise",
+        what: "Positive feedback with no request attached",
+        notFor: "Positive feedback that goes on to ask for something",
+        examples: ["The new scheduling view is a huge improvement"]
+      }
     ]
   },
   {
@@ -552,10 +811,26 @@ const DEMO_COLUMNS: ReadonlyArray<{
     type: "score",
     instruction: "How urgent is this for the customer?",
     labels: [
-      { name: "Critical", description: "Blocking work now, or a security or data-loss risk." },
-      { name: "High", description: "Seriously impeding the team, needs attention this week." },
-      { name: "Medium", description: "A real problem but there is a workaround." },
-      { name: "Low", description: "Nice to have, cosmetic, or informational." }
+      {
+        name: "Critical",
+        what: "Blocking work right now, or a security or data-loss risk",
+        signals: ["States they cannot work", "Mentions data loss or a security concern", "Month-end or board deadline"]
+      },
+      {
+        name: "High",
+        what: "Seriously impeding the team, needs attention this week",
+        signals: ["Describes real disruption", "Time-sensitive business impact"]
+      },
+      {
+        name: "Medium",
+        what: "A real problem with a workaround available",
+        signals: ["Describes a workaround", "Annoying but not blocking"]
+      },
+      {
+        name: "Low",
+        what: "Nice to have, cosmetic, or purely informational",
+        signals: ["Explicitly says it is not urgent", "A question or a suggestion"]
+      }
     ]
   }
 ]
@@ -583,7 +858,7 @@ export const createDemoDataset = (userId: string) =>
         type: column.type,
         instruction: column.instruction,
         labels: [...column.labels],
-        needsReviewThreshold: 0.8
+        needsReviewThreshold: defaultThresholdFor(column.type)
       })
     }
 

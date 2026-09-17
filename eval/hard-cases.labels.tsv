@@ -1,0 +1,25 @@
+case_id	ground_truth	rationale
+H-01	yes	Complaint about retyping dashboard figures into a warehouse implies a data-export capability that does not exist; no explicit ask, but the only remedy is a new feature.
+H-02	no	Asks what an existing API's rate limits are; a request for information, not capability. Flips to yes only on the reading that the limits should be configurable.
+H-03	yes	"Can you make the export include archived rows?" Export exists but the requested behaviour does not; an enhancement phrased as a yes/no question.
+H-04	no	Reports duplicated views losing column order and asks whether it is by design; framed as a bug but the author cannot tell bug from design. Honestly 50/50, labelled no because a question about intent is not a request.
+H-05	no	The product behaves exactly as documented and the customer dislikes the documented behaviour; a design disagreement, not a feature request, though the fix would be a behaviour change.
+H-06	yes	"How do I bulk-assign owners?" is a support question whose honest answer requires the capability to exist, so it doubles as a request for it.
+H-07	no	Asks where a shipped feature is in the UI; a discovery issue, not a request. Flips to yes if SSO in fact did not ship.
+H-08	yes	Feature exists for admins only and the customer asks for it for all users; "make X do Y" where X exists is an enhancement.
+H-09	no	Frustration about support response times with no product ask; a service complaint. Some read "get back to me faster" as a request, but that is not a product capability.
+H-10	yes	Scheduling to email exists, but asking specifically for delivery into a Slack channel is a capability the product lacks.
+H-11	no	A reproducible 500 with clear steps; a control bug that keeps the fixture from drifting all-ambiguous.
+H-12	yes	"200 rows a week by hand" with no named feature; an implicit automation request. Honestly 50/50 — some would dismiss it as vague feedback, but the workload points at a specific missing capability.
+H-13	no	Asks for a discount at renewal; a commercial request, not a product feature.
+H-14	yes	Monthly report export exists as CSV and finance wants Excel; an enhancement to an existing feature.
+H-15	no	Pre-sales question about whether the data model supports multi-currency; asks for an answer, not the capability. A salesperson might file it as a gap, which is the arguable part.
+H-16	yes	Bug report about a filter resetting that ends with an explicit "please make it remember" — an embedded feature ask inside a bug report.
+H-17	no	Capability exists behind a setting the customer did not enable; a configuration/support issue. Arguable if the setting is undiscoverable, which would make it a UX request.
+H-18	yes	Notes a competitor capability and asks whether we plan to match it; competitive-parity request phrased as a question.
+H-19	yes	Calls the settings area confusing and asks for a redesign; subjective with no specific capability, but a redesign is a concrete change. Some would label it vague feedback — genuinely arguable.
+H-20	no	Disputes a price increase; billing, not product. Flips if they ask for a specific billing capability such as itemised invoices.
+H-21	yes	"We cannot go live until the export handles 100,000 rows" frames an adoption blocker that is implicitly a request for larger exports.
+H-22	no	Asks for a walkthrough for new analysts; a service request, not a product feature.
+H-23	yes	API rejects unknown parameters and the customer asks for them to be ignored; a bug report that is really a request for changed error behaviour. Honestly 50/50.
+H-24	yes	"I know it's not on your roadmap, but..." followed by a described capability; explicit dismissal plus a capability description is still a request.

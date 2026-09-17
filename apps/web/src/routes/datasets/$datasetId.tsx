@@ -41,6 +41,14 @@ function DatasetLayout() {
           >
             Review
           </Link>
+          <Link
+            to="/datasets/$datasetId/report"
+            params={{ datasetId }}
+            activeProps={{ className: "text-foreground" }}
+            className="text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Report
+          </Link>
         </nav>
         {dataset !== undefined ? (
           <span className="ml-auto text-xs text-muted-foreground">

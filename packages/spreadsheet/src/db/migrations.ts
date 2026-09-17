@@ -134,6 +134,34 @@ export const spreadsheetMigrations: Record<string, Migration> = {
     yield* sql`CREATE INDEX IF NOT EXISTS batch_run_column_idx ON batch_run (ai_column_id)`
   }),
 
+  "0009_add_audit_flag": Effect.gen(function*() {
+    const sql = yield* SqlClient.SqlClient
+    // Review is not a random sample — people review uncertain rows first, so
+    // agreement measured on reviewed rows is biased downward. An audit draws a
+    // random sample of rows the user never looked at, which is the only way to
+    // state accuracy without misleading. See execution.md.
+    yield* sql`
+      ALTER TABLE result
+      ADD COLUMN IF NOT EXISTS in_audit boolean NOT NULL DEFAULT false
+    `
+  }),
+
+  "0008_add_criteria_version": Effect.gen(function*() {
+    const sql = yield* SqlClient.SqlClient
+    // Criteria are mutable state: refining them is how the product improves.
+    // Once they can change, results computed under different criteria are not
+    // comparable, so every result must record which version produced it.
+    // See corrections.md.
+    yield* sql`
+      ALTER TABLE ai_column
+      ADD COLUMN IF NOT EXISTS criteria_version integer NOT NULL DEFAULT 1
+    `
+    yield* sql`
+      ALTER TABLE result
+      ADD COLUMN IF NOT EXISTS criteria_version integer NOT NULL DEFAULT 1
+    `
+  }),
+
   "0007_create_usage_counter": Effect.gen(function*() {
     const sql = yield* SqlClient.SqlClient
     // Survives dataset deletion, and carries no row content — it is the meter.

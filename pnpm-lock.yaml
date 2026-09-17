@@ -72,6 +72,9 @@ importers:
       '@app/evaluate':
         specifier: workspace:*
         version: link:packages/evaluate
+      '@app/queue':
+        specifier: workspace:*
+        version: link:packages/queue
       '@app/spreadsheet':
         specifier: workspace:*
         version: link:packages/spreadsheet
@@ -124,6 +127,9 @@ importers:
       '@app/evaluate':
         specifier: workspace:*
         version: link:../../packages/evaluate
+      '@app/queue':
+        specifier: workspace:*
+        version: link:../../packages/queue
       '@app/spreadsheet':
         specifier: workspace:*
         version: link:../../packages/spreadsheet
@@ -242,6 +248,9 @@ importers:
       '@app/evaluate':
         specifier: workspace:*
         version: link:../../packages/evaluate
+      '@app/queue':
+        specifier: workspace:*
+        version: link:../../packages/queue
       '@app/spreadsheet':
         specifier: workspace:*
         version: link:../../packages/spreadsheet
@@ -313,6 +322,28 @@ importers:
         version: 4.23.13
 
   packages/evaluate:
+    devDependencies:
+      '@effect/vitest':
+        specifier: 4.0.0-rc.112
+        version: 4.0.0-rc.112(effect@4.0.0-rc.112)(vitest@4.1.11(@types/node@22.20.3)(vite@8.2.2(@types/node@22.20.3)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)))
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.20.3
+      tsx:
+        specifier: 'catalog:'
+        version: 4.23.13
+
+  packages/queue:
+    dependencies:
+      '@app/evaluate':
+        specifier: workspace:*
+        version: link:../evaluate
+      '@app/spreadsheet':
+        specifier: workspace:*
+        version: link:../spreadsheet
+      effect:
+        specifier: 'catalog:'
+        version: 4.0.0-rc.112
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.0-rc.112

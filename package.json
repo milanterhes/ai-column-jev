@@ -16,6 +16,7 @@
     "@app/auth": "workspace:*",
     "@app/core": "workspace:*",
     "@app/evaluate": "workspace:*",
+    "@app/queue": "workspace:*",
     "@app/spreadsheet": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",

@@ -113,3 +113,39 @@ T05 and T16 can begin.
    is about to change. I would sequence T04 → T16.
 2. **Is `proposals.md` 2.1 the right bet?** It is a large change to the core noun of the product.
    If the answer is no, Milestones 0 and 2 still stand alone and are cheap.
+
+
+---
+
+## Status
+
+**Done and verified.**
+
+| # | Ticket | Evidence |
+| --- | --- | --- |
+| T01 | Structured criteria + state decomposition | False unusables fell 4 → 1; the `not_for` branch is what did it |
+| T02 | Yes/No via Noul | Confidence went from saturated (6 distinct values, 0.59–1.00) to graded (17 distinct, 0.51–0.96) |
+| T03 | Per-type confidence policy | `defaultThresholdFor` — 0.6 for Noul, 0.8 for Choice/Score. **Not the original plan:** Noul's confidence is the selected answer's probability, not `\|p−0.5\|×2`, because Jev's Noul probability is compressed toward 0.5 and the transformed scale read as "30% confident" on the clearest positive in the set |
+| T09 | Agreement from corrections | In the report |
+| T10 | The column report | `/datasets/:id/columns/:cid/report` + a Report tab |
+| T21 | Random audit | `markAuditSample`; the report states plainly that it is the only unbiased number |
+| T16 | Queue, fairness, cancel | `@app/queue`: per-user per-class queue names, round-robin claim loop, reserved interactive slots, cancel-first handler, retryable/terminal split. Runs async end to end — 35 rows drained in under 8s while the request returned instantly |
+| T17 | Rate limiter | Not done. Redis is provisioned and idle |
+| T18 | Foreign key to `user` | Not done |
+| T19 | Idempotency | Proven by construction: results upsert on (ai_column_id, row_id) and queue ids are deterministic |
+| — | Unit tests | 26 tests on the evaluation core |
+| — | Harder eval fixture | `eval/hard-cases.{tsv,csv,md}` — 24 arguable cases, because E4 could not be answered on the easy fixture |
+
+**Bugs found and fixed along the way.**
+
+1. **Noul discarded the provider's own confidence** (found by the test agent). One line, and it defeated the point of storing it for comparison.
+2. **The queue's `id` is `varchar(36)`** — sized for a UUID. A readable `scope:column:row` key is 110 characters and every insert failed. Now a deterministic SHA-256 prefix, so replay dedupe still works.
+
+**Not done.**
+
+- **T04/T05 — fan-out.** Still one question per column, one call per row. This is the milestone that makes the second column nearly free, and it is unstarted. It is also the largest change and wants a clear head.
+- **T06–T08** depend on T04/T05.
+- **T11** saved rules. **T12** row-batching. **T13–T15.** **T20.**
+- **Preview still evaluates inline.** The spec says it should go through the queue as interactive-class work. At ten rows it is fast enough that this has not bitten, but it is a deviation.
+
+**One design flaw, stated rather than hidden:** an audit row the user *ignores* currently counts as agreed, which inflates the estimate. The report says so and calls the figure an upper bound. Fixing it properly needs an explicit confirm action on audit rows.

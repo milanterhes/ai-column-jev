@@ -76,6 +76,24 @@ export interface ImproveInstructionResult {
   labels?: Label[] | undefined
 }
 
+export interface ColumnReport {
+  total: number
+  judged: number
+  unusable: number
+  failed: number
+  baseRate: Array<{ label: string; share: number }>
+  reviewed: {
+    total: number
+    agreed: number
+    rate: number | null
+    byClass: Array<{ label: string; total: number; agreed: number; rate: number | null }>
+  }
+  buckets: Array<{ range: string; total: number; agreed: number; rate: number | null }>
+  audit: { total: number; agreed: number; rate: number | null } | null
+  disagreements: Array<{ rowId: string; model: string | null; human: string; confidence: number | null }>
+  warnings: string[]
+}
+
 export class ApiError extends Error {
   readonly status: number
 
@@ -138,6 +156,12 @@ export const api = {
 
   getResults: (datasetId: string, columnId: string) =>
     request<ResultDto[]>(`${columnBase(datasetId, columnId)}/results`),
+
+  getReport: (datasetId: string, columnId: string) =>
+    request<ColumnReport>(`${columnBase(datasetId, columnId)}/report`),
+
+  startAudit: (datasetId: string, columnId: string, count: number) =>
+    request<{ sampled: number }>(`${columnBase(datasetId, columnId)}/audit`, json({ count })),
 
   putCorrection: (datasetId: string, columnId: string, rowId: string, value: string) =>
     request<unknown>(`${columnBase(datasetId, columnId)}/corrections/${encodeURIComponent(rowId)}`, {

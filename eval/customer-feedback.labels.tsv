@@ -1,0 +1,36 @@
+ticket_id	ground_truth	is_feature_request_intent
+T-1001	yes	Asks for bulk report export
+T-1002	yes	Asks for a Slack integration
+T-1003	no	Reports a date bug
+T-1004	no	Reports a login bug
+T-1005	no	Renewal / churn risk
+T-1006	no	Cancellation
+T-1007	no	Billing dispute
+T-1008	no	Question about API limits
+T-1009	no	Performance complaint
+T-1010	no	Reports filter behaviour
+T-1011	unknown	Empty signal - "help"
+T-1012	unknown	Empty signal - "It is not working again."
+T-1013	unknown	Empty signal - "?"
+T-1014	unknown	Empty message
+T-1015	no	Thin bug report
+T-1016	no	Praise
+T-1017	yes	Asks for SAML SSO
+T-1018	no	Reports an export bug
+T-1019	no	Asks to schedule a call
+T-1020	no	Reports a report bug
+T-1021	no	Reports view-duplication behaviour
+T-1022	no	Cancellation with churn signal
+T-1023	no	Asks for a security questionnaire
+T-1024	unknown	Empty signal - "slow"
+T-1025	no	Reports a time zone bug
+T-1026	no	General UX feedback, no specific request
+T-1027	no	Reports a data loss bug
+T-1028	no	Complaint about support staffing
+T-1029	no	Question about audit log retention
+T-1030	unknown	Empty signal - "Everything broke this morning."
+T-1031	no	Reports an export bug
+T-1032	no	Sales / pricing question
+T-1033	unknown	"Just looking around, no question yet."
+T-1034	yes	Asks for dark mode
+T-1035	no	Reports a security bug

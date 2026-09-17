@@ -15,6 +15,7 @@ import { Route as ApiSplatRouteImport } from './routes/api/$'
 import { Route as DatasetsIndexRouteImport } from './routes/datasets/index'
 import { Route as DatasetsDatasetIdRouteImport } from './routes/datasets/$datasetId'
 import { Route as DatasetsDatasetIdIndexRouteImport } from './routes/datasets/$datasetId/index'
+import { Route as DatasetsDatasetIdReportRouteImport } from './routes/datasets/$datasetId/report'
 import { Route as DatasetsDatasetIdReviewRouteImport } from './routes/datasets/$datasetId/review'
 
 const IndexRoute = IndexRouteImport.update({
@@ -47,6 +48,11 @@ const DatasetsDatasetIdIndexRoute = DatasetsDatasetIdIndexRouteImport.update({
   path: '/',
   getParentRoute: () => DatasetsDatasetIdRoute,
 } as any)
+const DatasetsDatasetIdReportRoute = DatasetsDatasetIdReportRouteImport.update({
+  id: '/report',
+  path: '/report',
+  getParentRoute: () => DatasetsDatasetIdRoute,
+} as any)
 const DatasetsDatasetIdReviewRoute = DatasetsDatasetIdReviewRouteImport.update({
   id: '/review',
   path: '/review',
@@ -59,6 +65,7 @@ export interface FileRoutesByFullPath {
   '/api/$': typeof ApiSplatRoute
   '/datasets/$datasetId': typeof DatasetsDatasetIdRouteWithChildren
   '/datasets/': typeof DatasetsIndexRoute
+  '/datasets/$datasetId/report': typeof DatasetsDatasetIdReportRoute
   '/datasets/$datasetId/review': typeof DatasetsDatasetIdReviewRoute
   '/datasets/$datasetId/': typeof DatasetsDatasetIdIndexRoute
 }
@@ -67,6 +74,7 @@ export interface FileRoutesByTo {
   '/signin': typeof SigninRoute
   '/api/$': typeof ApiSplatRoute
   '/datasets': typeof DatasetsIndexRoute
+  '/datasets/$datasetId/report': typeof DatasetsDatasetIdReportRoute
   '/datasets/$datasetId/review': typeof DatasetsDatasetIdReviewRoute
   '/datasets/$datasetId': typeof DatasetsDatasetIdIndexRoute
 }
@@ -77,6 +85,7 @@ export interface FileRoutesById {
   '/api/$': typeof ApiSplatRoute
   '/datasets/$datasetId': typeof DatasetsDatasetIdRouteWithChildren
   '/datasets/': typeof DatasetsIndexRoute
+  '/datasets/$datasetId/report': typeof DatasetsDatasetIdReportRoute
   '/datasets/$datasetId/review': typeof DatasetsDatasetIdReviewRoute
   '/datasets/$datasetId/': typeof DatasetsDatasetIdIndexRoute
 }
@@ -88,6 +97,7 @@ export interface FileRouteTypes {
     | '/api/$'
     | '/datasets/$datasetId'
     | '/datasets/'
+    | '/datasets/$datasetId/report'
     | '/datasets/$datasetId/review'
     | '/datasets/$datasetId/'
   fileRoutesByTo: FileRoutesByTo
@@ -96,6 +106,7 @@ export interface FileRouteTypes {
     | '/signin'
     | '/api/$'
     | '/datasets'
+    | '/datasets/$datasetId/report'
     | '/datasets/$datasetId/review'
     | '/datasets/$datasetId'
   id:
@@ -105,6 +116,7 @@ export interface FileRouteTypes {
     | '/api/$'
     | '/datasets/$datasetId'
     | '/datasets/'
+    | '/datasets/$datasetId/report'
     | '/datasets/$datasetId/review'
     | '/datasets/$datasetId/'
   fileRoutesById: FileRoutesById
@@ -161,6 +173,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DatasetsDatasetIdIndexRouteImport
       parentRoute: typeof DatasetsDatasetIdRoute
     }
+    '/datasets/$datasetId/report': {
+      id: '/datasets/$datasetId/report'
+      path: '/report'
+      fullPath: '/datasets/$datasetId/report'
+      preLoaderRoute: typeof DatasetsDatasetIdReportRouteImport
+      parentRoute: typeof DatasetsDatasetIdRoute
+    }
     '/datasets/$datasetId/review': {
       id: '/datasets/$datasetId/review'
       path: '/review'
@@ -172,11 +191,13 @@ declare module '@tanstack/react-router' {
 }
 
 interface DatasetsDatasetIdRouteChildren {
+  DatasetsDatasetIdReportRoute: typeof DatasetsDatasetIdReportRoute
   DatasetsDatasetIdReviewRoute: typeof DatasetsDatasetIdReviewRoute
   DatasetsDatasetIdIndexRoute: typeof DatasetsDatasetIdIndexRoute
 }
 
 const DatasetsDatasetIdRouteChildren: DatasetsDatasetIdRouteChildren = {
+  DatasetsDatasetIdReportRoute: DatasetsDatasetIdReportRoute,
   DatasetsDatasetIdReviewRoute: DatasetsDatasetIdReviewRoute,
   DatasetsDatasetIdIndexRoute: DatasetsDatasetIdIndexRoute,
 }

@@ -141,7 +141,7 @@ export interface NewAiColumn {
 }
 
 const COLUMN_COLUMNS = `id, dataset_id, name, type, instruction, labels, ordered,
-  needs_review_threshold, created_at`
+  needs_review_threshold, criteria_version, created_at`
 
 export const insertAiColumn = (input: NewAiColumn) =>
   Effect.gen(function*() {
@@ -184,7 +184,7 @@ export const deleteAiColumn = (id: string) =>
 // ── Results ─────────────────────────────────────────────────────────────────
 
 const RESULT_COLUMNS = `id, ai_column_id, row_id, selected_value, confidence,
-  provider_confidence, sufficiency, status, detail, provider_response, created_at`
+  provider_confidence, sufficiency, status, criteria_version, detail, provider_response, created_at, in_audit`
 
 export interface UpsertResult {
   readonly aiColumnId: string
@@ -194,6 +194,7 @@ export interface UpsertResult {
   readonly providerConfidence: number | null
   readonly sufficiency: number | null
   readonly status: string
+  readonly criteriaVersion: number
   readonly detail: unknown
   readonly providerResponse: unknown
 }
@@ -209,9 +210,9 @@ export const upsertResult = (input: UpsertResult) =>
     yield* sql`
       INSERT INTO result
         (ai_column_id, row_id, selected_value, confidence, provider_confidence,
-         sufficiency, status, detail, provider_response)
+         sufficiency, status, criteria_version, detail, provider_response)
       VALUES (${input.aiColumnId}, ${input.rowId}, ${input.selectedValue}, ${input.confidence},
-              ${input.providerConfidence}, ${input.sufficiency}, ${input.status},
+              ${input.providerConfidence}, ${input.sufficiency}, ${input.status}, ${input.criteriaVersion},
               ${input.detail === null ? null : JSON.stringify(input.detail)},
               ${input.providerResponse === null ? null : JSON.stringify(input.providerResponse)})
       ON CONFLICT (ai_column_id, row_id) DO UPDATE SET
@@ -220,6 +221,7 @@ export const upsertResult = (input: UpsertResult) =>
         provider_confidence = EXCLUDED.provider_confidence,
         sufficiency = EXCLUDED.sufficiency,
         status = EXCLUDED.status,
+        criteria_version = EXCLUDED.criteria_version,
         detail = EXCLUDED.detail,
         provider_response = EXCLUDED.provider_response,
         created_at = now()
@@ -237,6 +239,31 @@ export const listResults = (aiColumnId: string) =>
   })
 
 /** Progress is derived from this, never tracked in a separate counter. */
+/**
+ * Draw a random audit sample from rows the user has not already reviewed.
+ * Marked rather than copied, so the correction mechanism is the label.
+ */
+export const markAuditSample = (aiColumnId: string, count: number) =>
+  Effect.gen(function*() {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`UPDATE result SET in_audit = false WHERE ai_column_id = ${aiColumnId}`
+    const rows = yield* sql`
+      UPDATE result SET in_audit = true
+      WHERE id IN (
+        SELECT r.id FROM result r
+        WHERE r.ai_column_id = ${aiColumnId}
+          AND r.selected_value IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM correction c
+            WHERE c.ai_column_id = r.ai_column_id AND c.row_id = r.row_id
+          )
+        ORDER BY random() LIMIT ${count}
+      )
+      RETURNING id
+    `
+    return rows.length
+  })
+
 export const countResultsByStatus = (aiColumnId: string) =>
   Effect.gen(function*() {
     const sql = yield* SqlClient.SqlClient

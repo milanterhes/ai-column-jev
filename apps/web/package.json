@@ -14,6 +14,7 @@
     "@app/auth": "workspace:*",
     "@app/core": "workspace:*",
     "@app/evaluate": "workspace:*",
+    "@app/queue": "workspace:*",
     "@app/spreadsheet": "workspace:*",
     "@base-ui/react": "^1.7.0",
     "@effect/atom-react": "catalog:",

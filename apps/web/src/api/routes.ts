@@ -1,5 +1,6 @@
 import { DomainError } from "@app/spreadsheet/service"
 import * as spreadsheet from "@app/spreadsheet/service"
+import { enqueueRows } from "@app/queue"
 import type { ManagedRuntime } from "effect"
 
 /**
@@ -129,10 +130,35 @@ export const handleApi = async (
         )
       }
       if (tail === "run" && method === "POST") {
-        return await run(spreadsheet.runColumn(currentUserId, datasetId, columnId))
+        // Enqueue rather than evaluate inline: a large sheet would otherwise
+        // hold the request open for minutes with no way to cancel. The worker
+        // owns the work; the browser polls results. See spec.md §7.
+        const prepared = (await runtime.runPromise(
+          spreadsheet.prepareRun(currentUserId, datasetId, columnId) as never
+        )) as { runId: string; rowIds: string[]; totalRows: number }
+        await runtime.runPromise(
+          enqueueRows(
+            {
+              runId: prepared.runId,
+              userId: currentUserId,
+              aiColumnId: columnId,
+              kind: "bulk",
+              scope: prepared.runId
+            },
+            prepared.rowIds
+          ) as never
+        )
+        return json(200, { runId: prepared.runId, totalRows: prepared.totalRows, queued: prepared.rowIds.length })
       }
       if (tail === "results" && method === "GET") {
         return await run(spreadsheet.getResults(currentUserId, datasetId, columnId))
+      }
+      if (tail === "report" && method === "GET") {
+        return await run(spreadsheet.getColumnReport(currentUserId, datasetId, columnId))
+      }
+      if (tail === "audit" && method === "POST") {
+        const input = await body<{ count?: number }>().catch(() => ({ count: 25 }))
+        return await run(spreadsheet.startAudit(currentUserId, datasetId, columnId, input.count ?? 25))
       }
       if (tail === "corrections" && parts.length === 6) {
         const rowId = parts[5]!
