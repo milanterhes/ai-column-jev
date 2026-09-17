@@ -199,3 +199,37 @@ shipped is **within a column**: one call carries all of a column's questions.
 That keeps the run and cancel model intact, delivers the measured win, and is
 still the foundation composites need. Cross-column grouping is a further
 optimisation and should be measured before it is built.
+
+
+---
+
+## Status, third pass — T04/T05 landed
+
+A column now carries a **set** of questions. Verified live: a column with one
+judgment question plus three extras — `is_bug`, `is_billing` and a three-level
+`frustration` score — evaluated **all five questions per row in one call** for
+35 rows, in 4 seconds, with every extra answer stored and attributable.
+
+That is the fan-out win, and the token arithmetic is why: a question costs ~30
+tokens against a ~390 token request floor, so five questions cost a fraction
+more than one.
+
+**A modelling choice worth recording.** The column's own definition stays the
+*primary* question, keyed `judgment`, so the single-question path and its parse
+logic are untouched. The `question` table holds the extras. That is not the
+purest model — a purist would put all questions in one table and derive the
+primary — but it kept the diff small and left every existing path working,
+which mattered more than elegance at this point. Consolidating later is
+mechanical.
+
+**Still not done:**
+
+| # | Ticket |
+| --- | --- |
+| T06/T08 | Composite columns — composing a value in code from several answers with tunable weights. The substrate now exists (`result.answers`); the composition rule and its UI do not. |
+| T07 | Speculative suggestions — proposing extras automatically. The mechanism exists; the proposal does not. |
+| T11 | Saved rules, re-applied |
+| T13–T15 | Escalation, entity resolution, explain-this-result |
+| T18 | Foreign key to `user` |
+| T20 | Connector sync |
+| — | The row-detail panel does not yet render the extra answers. They are stored and returned by the API; nothing displays them. |

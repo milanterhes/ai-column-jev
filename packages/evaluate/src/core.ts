@@ -227,18 +227,64 @@ const sufficiencyQuestion = (
   }
 })
 
+/**
+ * A question that travels alongside the column's own, evaluated in the same
+ * request. It does not decide the column's value — it is brought along because
+ * a question costs ~30 tokens against a ~390 token request floor, so asking
+ * something you might want is close to free.
+ */
+export interface ExtraQuestion {
+  readonly key: string
+  readonly type: ColumnType
+  readonly instruction: string
+  readonly labels: ReadonlyArray<Label>
+}
+
+export const extraQuestionId = (key: string): string => `q:${key}`
+export const batchExtraQuestionId = (rowId: string, key: string): string =>
+  `q:${rowId}:${key}`
+
+const asQuestion = (extra: ExtraQuestion, threshold: number): AiColumn => ({
+  type: extra.type,
+  instruction: extra.instruction,
+  labels: extra.labels,
+  needsReviewThreshold: threshold
+})
+
+/**
+ * Every extra question's answer, keyed by the caller's own key. `null` means
+ * the provider returned nothing for it, which is different from an answer of
+ * false and is kept that way.
+ */
+export const extractAnswers = (
+  response: JevResponse,
+  extras: ReadonlyArray<ExtraQuestion>,
+  idOf: (key: string) => string = extraQuestionId
+): Record<string, unknown> => {
+  const answers = response.answers ?? {}
+  const out: Record<string, unknown> = {}
+  for (const extra of extras) out[extra.key] = answers[idOf(extra.key)] ?? null
+  return out
+}
+
 export const buildRequest = (
   column: AiColumn,
   row: Readonly<Record<string, unknown>>,
-  model = "jev-latest"
-): JevRequest => ({
-  state: renderState(row),
-  model,
-  questions: {
+  model = "jev-latest",
+  extras: ReadonlyArray<ExtraQuestion> = []
+): JevRequest => {
+  const questions: Record<string, unknown> = {
     [JUDGMENT_ID]: judgmentQuestion(column, Object.keys(row)),
     [SUFFICIENCY_ID]: sufficiencyQuestion(column, Object.keys(row))
   }
-})
+  for (const extra of extras) {
+    questions[extraQuestionId(extra.key)] = judgmentQuestion(
+      asQuestion(extra, column.needsReviewThreshold),
+      Object.keys(row)
+    )
+  }
+  return { state: renderState(row), model, questions }
+}
 
 /**
  * One request carrying many rows, with one question pair per row.
@@ -263,7 +309,8 @@ export const batchSufficiencyId = (rowId: string): string => `s:${rowId}`
 export const buildBatchRequest = (
   column: AiColumn,
   rows: ReadonlyArray<BatchRow>,
-  model = "jev-latest"
+  model = "jev-latest",
+  extras: ReadonlyArray<ExtraQuestion> = []
 ): JevRequest => {
   const questions: Record<string, unknown> = {}
   rows.forEach((row, index) => {
@@ -271,6 +318,13 @@ export const buildBatchRequest = (
     const prefix = `rows[${index}]`
     questions[batchJudgmentId(row.id)] = judgmentQuestion(column, keys, prefix)
     questions[batchSufficiencyId(row.id)] = sufficiencyQuestion(column, keys, prefix)
+    for (const extra of extras) {
+      questions[batchExtraQuestionId(row.id, extra.key)] = judgmentQuestion(
+        asQuestion(extra, column.needsReviewThreshold),
+        keys,
+        prefix
+      )
+    }
   })
 
   return {
@@ -284,6 +338,24 @@ export const buildBatchRequest = (
  * Split a batch response back out to rows. A row with no answer at all is a
  * failure, not a silent skip — the caller must be able to tell the difference.
  */
+/** Per-row extras from a batch response, keyed by row id then question key. */
+export const extractBatchAnswers = (
+  response: JevResponse,
+  rows: ReadonlyArray<BatchRow>,
+  extras: ReadonlyArray<ExtraQuestion>
+): Map<string, Record<string, unknown>> => {
+  const answers = response.answers ?? {}
+  const out = new Map<string, Record<string, unknown>>()
+  for (const row of rows) {
+    const perRow: Record<string, unknown> = {}
+    for (const extra of extras) {
+      perRow[extra.key] = answers[batchExtraQuestionId(row.id, extra.key)] ?? null
+    }
+    out.set(row.id, perRow)
+  }
+  return out
+}
+
 export const parseBatchResponse = (
   column: AiColumn,
   response: JevResponse,

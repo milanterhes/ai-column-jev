@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
 import { SqlClient, SqlError } from "effect/unstable/sql"
-import { EvaluationError, EvaluationService, defaultThresholdFor } from "@app/evaluate"
+import { EvaluationError, EvaluationService, defaultThresholdFor, type ExtraQuestion } from "@app/evaluate"
 import type { AiColumn as EvaluationColumn, Label as EvaluationLabel } from "@app/evaluate"
 import { parseCsv, toRowObject, type ParsedCsv } from "./csv.ts"
 import * as repo from "./repo.ts"
@@ -130,6 +130,14 @@ export const removeDataset = (userId: string, datasetId: string) =>
 
 // ── AI columns ──────────────────────────────────────────────────────────────
 
+const toExtraQuestions = (questions: ReadonlyArray<repo.QuestionShape>): ExtraQuestion[] =>
+  questions.map((question) => ({
+    key: question.key,
+    type: question.type,
+    instruction: question.instruction,
+    labels: question.labels
+  }))
+
 const toEvaluationColumn = (column: repo.AiColumnShape): EvaluationColumn => ({
   type: column.type,
   instruction: column.instruction,
@@ -156,6 +164,14 @@ export const createAiColumn = (
     readonly instruction: string
     readonly labels?: ReadonlyArray<{ name: string; description?: string }> | undefined
     readonly needsReviewThreshold?: number | undefined
+    /** Extra questions evaluated in the same request. They do not decide the
+     * column's value; they ride along because asking is nearly free. */
+    readonly questions?: ReadonlyArray<{
+      readonly key: string
+      readonly type: "yes_no" | "category" | "score"
+      readonly instruction: string
+      readonly labels: ReadonlyArray<{ name: string; description?: string }>
+    }> | undefined
   }
 ) =>
   Effect.gen(function*() {
@@ -185,13 +201,30 @@ export const createAiColumn = (
       needsReviewThreshold: input.needsReviewThreshold ?? defaultThresholdFor(input.type)
     })
 
+    const extras = input.questions ?? []
+    yield* Effect.forEach(
+      extras,
+      (question, index) =>
+        repo.insertQuestion({
+          id: newId(),
+          aiColumnId: id,
+          key: question.key,
+          type: question.type,
+          instruction: question.instruction,
+          labels: [...question.labels],
+          ordinal: index + 1
+        }),
+      { discard: true }
+    )
+
     return {
       id,
       name: input.name.trim(),
       type: input.type,
       instruction: input.instruction.trim(),
       labels,
-      needsReviewThreshold: input.needsReviewThreshold ?? defaultThresholdFor(input.type)
+      needsReviewThreshold: input.needsReviewThreshold ?? defaultThresholdFor(input.type),
+      questions: extras
     }
   })
 
@@ -212,11 +245,12 @@ const evaluateRows = (
   Effect.gen(function*() {
     const evaluator = yield* EvaluationService
     const evaluationColumn = toEvaluationColumn(column)
+    const extras = toExtraQuestions(yield* repo.listQuestions(column.id))
 
     yield* Effect.forEach(
       rows,
       (row) =>
-        evaluator.evaluate(evaluationColumn, row.data as Record<string, unknown>).pipe(
+        evaluator.evaluate(evaluationColumn, row.data as Record<string, unknown>, extras).pipe(
           Effect.catchIf(
             (error): error is EvaluationError => error instanceof EvaluationError,
             (error) =>
@@ -234,6 +268,7 @@ const evaluateRows = (
                 usage: null
               },
               providerResponse: { error: error.reason },
+              answers: {},
               model: "unknown"
             })
           ),
@@ -247,6 +282,7 @@ const evaluateRows = (
               sufficiency: evaluated.result.sufficiency,
               status: evaluated.result.status,
               criteriaVersion: column.criteria_version,
+              answers: evaluated.answers,
               detail: evaluated.result.detail,
               providerResponse: evaluated.providerResponse
             })
@@ -337,7 +373,8 @@ export const getResults = (userId: string, datasetId: string, columnId: string) 
         result.detail === null && result.selected_value === null
           ? []
           : distributionOf(result),
-      correctedValue: correctionsByRow.get(result.row_id) ?? null
+      correctedValue: correctionsByRow.get(result.row_id) ?? null,
+      answers: (result.answers ?? {}) as Record<string, unknown>
     }))
   })
 

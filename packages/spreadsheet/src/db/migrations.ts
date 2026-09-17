@@ -146,6 +146,35 @@ export const spreadsheetMigrations: Record<string, Migration> = {
     `
   }),
 
+  "0011_add_questions": Effect.gen(function*() {
+    const sql = yield* SqlClient.SqlClient
+    // A column may carry more than its headline question. One Jev request
+    // carries all of them, because a question costs ~30 tokens against a ~390
+    // token request floor: six questions measured at 1.36x the cost of one, not
+    // 6x. The column's own definition stays the primary question (keyed
+    // `judgment`), so the single-question path is unchanged; this table holds
+    // the extras that fan out alongside it.
+    yield* sql`
+      CREATE TABLE IF NOT EXISTS question (
+        id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        ai_column_id uuid NOT NULL REFERENCES ai_column(id) ON DELETE CASCADE,
+        key text NOT NULL,
+        type text NOT NULL,
+        instruction text NOT NULL,
+        labels jsonb NOT NULL DEFAULT '[]',
+        ordinal integer NOT NULL DEFAULT 1
+      )
+    `
+    yield* sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS question_key_idx ON question (ai_column_id, key)
+    `
+    // Every answer in the request, keyed by question, so the extras are kept
+    // and a composite can later compose from them.
+    yield* sql`ALTER TABLE result ADD COLUMN IF NOT EXISTS answers jsonb`
+    yield* sql`ALTER TABLE ai_column ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'single'`
+    yield* sql`ALTER TABLE ai_column ADD COLUMN IF NOT EXISTS composition jsonb`
+  }),
+
   "0008_add_criteria_version": Effect.gen(function*() {
     const sql = yield* SqlClient.SqlClient
     // Criteria are mutable state: refining them is how the product improves.

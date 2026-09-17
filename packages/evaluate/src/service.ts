@@ -2,6 +2,8 @@ import { Context, Duration, Effect, Layer, Schedule } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import * as RateLimiter from "effect/unstable/persistence/RateLimiter"
 import {
+  extractAnswers,
+  extractBatchAnswers,
   batchJudgmentId,
   batchSufficiencyId,
   buildBatchRequest,
@@ -9,6 +11,7 @@ import {
   failedResult,
   parseBatchResponse,
   type BatchRow,
+  type ExtraQuestion,
   parseResponse,
   trimProviderResponse,
   type AiColumn,
@@ -44,13 +47,16 @@ export interface EvaluatedRow {
   readonly result: EvaluationResult
   /** The trimmed provider response we persist for debugging. */
   readonly providerResponse: unknown
+  /** Every extra question's answer, keyed by the caller's key. */
+  readonly answers: Record<string, unknown>
   readonly model: string
 }
 
 export interface EvaluationServiceShape {
   readonly evaluate: (
     column: AiColumn,
-    row: Readonly<Record<string, unknown>>
+    row: Readonly<Record<string, unknown>>,
+    extras?: ReadonlyArray<ExtraQuestion>
   ) => Effect.Effect<EvaluatedRow, EvaluationError>
   /**
    * Many rows, one request. Measured at 1.8x cheaper and ~40x faster than the
@@ -60,7 +66,8 @@ export interface EvaluationServiceShape {
    */
   readonly evaluateMany: (
     column: AiColumn,
-    rows: ReadonlyArray<BatchRow>
+    rows: ReadonlyArray<BatchRow>,
+    extras?: ReadonlyArray<ExtraQuestion>
   ) => Effect.Effect<ReadonlyMap<string, EvaluatedRow>, EvaluationError>
 }
 
@@ -140,8 +147,8 @@ export const EvaluationServiceLive: Layer.Layer<
         return { status, json }
       })
 
-    const evaluate: EvaluationServiceShape["evaluate"] = (column: AiColumn, row) =>
-      callOnce(buildRequest(column, row, config.model)).pipe(
+    const evaluate: EvaluationServiceShape["evaluate"] = (column, row, extras = []) =>
+      callOnce(buildRequest(column, row, config.model, extras)).pipe(
         // Back off on transient provider failures; the schedule is capped so a
         // row cannot occupy a worker slot indefinitely.
         Effect.retry({
@@ -153,19 +160,21 @@ export const EvaluationServiceLive: Layer.Layer<
             return {
               result: failedResult(`provider rejected the request (HTTP ${attempt.status})`),
               providerResponse: null,
+              answers: {},
               model: config.model
             }
           }
           return {
             result: parseResponse(column, attempt.json as never),
             providerResponse: trimProviderResponse(attempt.json as never),
+            answers: extractAnswers(attempt.json as never, extras),
             model: config.model
           }
         })
       )
 
-    const evaluateMany: EvaluationServiceShape["evaluateMany"] = (column, rows) =>
-      callOnce(buildBatchRequest(column, rows, config.model)).pipe(
+    const evaluateMany: EvaluationServiceShape["evaluateMany"] = (column, rows, extras = []) =>
+      callOnce(buildBatchRequest(column, rows, config.model, extras)).pipe(
         Effect.retry({
           schedule: Schedule.exponential(Duration.millis(500)),
           times: MAX_RETRIES
@@ -177,12 +186,14 @@ export const EvaluationServiceLive: Layer.Layer<
               out.set(row.id, {
                 result: failedResult(`provider rejected the request (HTTP ${attempt.status})`),
                 providerResponse: null,
+                answers: {},
                 model: config.model
               })
             }
             return out
           }
           const parsed = parseBatchResponse(column, attempt.json as never, rows)
+          const extrasByRow = extractBatchAnswers(attempt.json as never, rows, extras)
           // Keep each row's own answers rather than duplicating the whole batch
           // response per row — small, and enough to debug a single row.
           const raw = (attempt.json as { answers?: Record<string, unknown> }).answers ?? {}
@@ -198,6 +209,7 @@ export const EvaluationServiceLive: Layer.Layer<
                 },
                 usage: (attempt.json as { usage?: unknown }).usage ?? null
               },
+              answers: extrasByRow.get(row.id) ?? {},
               model: config.model
             })
           }

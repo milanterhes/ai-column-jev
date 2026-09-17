@@ -55,11 +55,24 @@ export const AiColumn = Schema.Struct({
   instruction: Schema.String,
   labels: Schema.Array(Label),
   criteria_version: Schema.Number,
+  kind: Schema.Literals(["single", "composite"]),
+  composition: Schema.NullOr(Schema.Unknown),
   ordered: Schema.Boolean,
   needs_review_threshold: Schema.Number,
   created_at: Schema.Date
 })
 export type AiColumn = Schema.Schema.Type<typeof AiColumn>
+
+export const Question = Schema.Struct({
+  id: Schema.String,
+  ai_column_id: Schema.String,
+  key: Schema.String,
+  type: ColumnType,
+  instruction: Schema.String,
+  labels: Schema.Array(Label),
+  ordinal: Schema.Number
+})
+export type Question = Schema.Schema.Type<typeof Question>
 
 export const Result = Schema.Struct({
   id: Schema.String,
@@ -71,6 +84,7 @@ export const Result = Schema.Struct({
   sufficiency: Schema.NullOr(Schema.Number),
   status: ResultStatus,
   criteria_version: Schema.Number,
+  answers: Schema.NullOr(Schema.Unknown),
   detail: Schema.NullOr(Schema.Unknown),
   provider_response: Schema.NullOr(Schema.Unknown),
   in_audit: Schema.Boolean,

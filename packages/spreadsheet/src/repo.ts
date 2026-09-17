@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import * as Schema from "effect/Schema"
 import { SqlClient } from "effect/unstable/sql"
-import { AiColumn, Correction, Dataset, DatasetRow, Label, Result } from "./db/models.ts"
+import { AiColumn, Correction, Dataset, DatasetRow, Label, Question, Result } from "./db/models.ts"
 
 export type DatasetShape = Dataset
 export type DatasetRowShape = DatasetRow
@@ -9,6 +9,7 @@ export type AiColumnShape = AiColumn
 export type ResultShape = Result
 export type CorrectionShape = Correction
 export type LabelShape = Label
+export type QuestionShape = Question
 
 /**
  * Repositories. Raw SQL through Effect's Postgres layer, with every row decoded
@@ -23,6 +24,7 @@ const decodeDatasetRow = Schema.decodeUnknownSync(DatasetRow)
 const decodeAiColumn = Schema.decodeUnknownSync(AiColumn)
 const decodeResult = Schema.decodeUnknownSync(Result)
 const decodeCorrection = Schema.decodeUnknownSync(Correction)
+const decodeQuestion = Schema.decodeUnknownSync(Question)
 
 // ── Datasets ────────────────────────────────────────────────────────────────
 
@@ -141,7 +143,7 @@ export interface NewAiColumn {
 }
 
 const COLUMN_COLUMNS = `id, dataset_id, name, type, instruction, labels, ordered,
-  needs_review_threshold, criteria_version, created_at`
+  needs_review_threshold, criteria_version, kind, composition, created_at`
 
 export const insertAiColumn = (input: NewAiColumn) =>
   Effect.gen(function*() {
@@ -174,6 +176,41 @@ export const findAiColumn = (datasetId: string, id: string) =>
     return rows.length === 0 ? null : decodeAiColumn(rows[0]!)
   })
 
+export interface NewQuestion {
+  readonly id: string
+  readonly aiColumnId: string
+  readonly key: string
+  readonly type: "yes_no" | "category" | "score"
+  readonly instruction: string
+  readonly labels: ReadonlyArray<LabelShape>
+  readonly ordinal: number
+}
+
+export const insertQuestion = (input: NewQuestion) =>
+  Effect.gen(function*() {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`
+      INSERT INTO question (id, ai_column_id, key, type, instruction, labels, ordinal)
+      VALUES (${input.id}, ${input.aiColumnId}, ${input.key}, ${input.type},
+              ${input.instruction}, ${JSON.stringify(input.labels)}, ${input.ordinal})
+      ON CONFLICT (ai_column_id, key) DO UPDATE SET
+        type = EXCLUDED.type,
+        instruction = EXCLUDED.instruction,
+        labels = EXCLUDED.labels,
+        ordinal = EXCLUDED.ordinal
+    `
+  })
+
+export const listQuestions = (aiColumnId: string) =>
+  Effect.gen(function*() {
+    const sql = yield* SqlClient.SqlClient
+    const rows = yield* sql`
+      SELECT id, ai_column_id, key, type, instruction, labels, ordinal
+      FROM question WHERE ai_column_id = ${aiColumnId} ORDER BY ordinal
+    `
+    return rows.map((row) => decodeQuestion(row))
+  })
+
 export const deleteAiColumn = (id: string) =>
   Effect.gen(function*() {
     const sql = yield* SqlClient.SqlClient
@@ -184,7 +221,7 @@ export const deleteAiColumn = (id: string) =>
 // ── Results ─────────────────────────────────────────────────────────────────
 
 const RESULT_COLUMNS = `id, ai_column_id, row_id, selected_value, confidence,
-  provider_confidence, sufficiency, status, criteria_version, detail, provider_response, created_at, in_audit`
+  provider_confidence, sufficiency, status, criteria_version, answers, detail, provider_response, created_at, in_audit`
 
 export interface UpsertResult {
   readonly aiColumnId: string
@@ -195,6 +232,7 @@ export interface UpsertResult {
   readonly sufficiency: number | null
   readonly status: string
   readonly criteriaVersion: number
+  readonly answers: unknown
   readonly detail: unknown
   readonly providerResponse: unknown
 }
@@ -210,9 +248,10 @@ export const upsertResult = (input: UpsertResult) =>
     yield* sql`
       INSERT INTO result
         (ai_column_id, row_id, selected_value, confidence, provider_confidence,
-         sufficiency, status, criteria_version, detail, provider_response)
+         sufficiency, status, criteria_version, answers, detail, provider_response)
       VALUES (${input.aiColumnId}, ${input.rowId}, ${input.selectedValue}, ${input.confidence},
               ${input.providerConfidence}, ${input.sufficiency}, ${input.status}, ${input.criteriaVersion},
+              ${input.answers === null ? null : JSON.stringify(input.answers)},
               ${input.detail === null ? null : JSON.stringify(input.detail)},
               ${input.providerResponse === null ? null : JSON.stringify(input.providerResponse)})
       ON CONFLICT (ai_column_id, row_id) DO UPDATE SET
@@ -222,6 +261,7 @@ export const upsertResult = (input: UpsertResult) =>
         sufficiency = EXCLUDED.sufficiency,
         status = EXCLUDED.status,
         criteria_version = EXCLUDED.criteria_version,
+        answers = EXCLUDED.answers,
         detail = EXCLUDED.detail,
         provider_response = EXCLUDED.provider_response,
         created_at = now()

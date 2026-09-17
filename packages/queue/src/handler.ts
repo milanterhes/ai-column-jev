@@ -1,7 +1,7 @@
 import { Duration, Effect } from "effect"
 import { EvaluationError, EvaluationService } from "@app/evaluate"
 import type { AiColumn as EvaluationColumn, EvaluatedRow } from "@app/evaluate"
-import { upsertResult } from "@app/spreadsheet/repo"
+import { listQuestions, upsertResult } from "@app/spreadsheet/repo"
 import { SqlClient, SqlError } from "effect/unstable/sql"
 import type { QueueConfigShape } from "./config.ts"
 import * as repo from "./repo.ts"
@@ -62,6 +62,12 @@ export const handleRow = (
     }
 
     const evaluator = yield* EvaluationService
+    const extras = (yield* listQuestions(column.id)).map((question) => ({
+      key: question.key,
+      type: question.type,
+      instruction: question.instruction,
+      labels: question.labels
+    }))
 
     // A chunk: build one request for every row in it, then fan the answers
     // back out. Terminal failures are written per row, and a chunk that fails
@@ -71,7 +77,7 @@ export const handleRow = (
       if (chunk.length === 0) return
 
       const results = yield* evaluator
-        .evaluateMany(toEvaluationColumn(column), chunk)
+        .evaluateMany(toEvaluationColumn(column), chunk, extras)
         .pipe(
           Effect.catchIf(
             (error): error is EvaluationError => error instanceof EvaluationError,
@@ -95,6 +101,7 @@ export const handleRow = (
             sufficiency: evaluated?.result.sufficiency ?? null,
             status: evaluated?.result.status ?? "failed",
             criteriaVersion: column.criteria_version,
+            answers: evaluated?.answers ?? null,
             detail: evaluated?.result.detail ?? null,
             providerResponse: evaluated?.providerResponse ?? { error: "no answer in batch" }
           })
@@ -107,7 +114,7 @@ export const handleRow = (
     const row = yield* repo.findWorkRow(work.rowId)
     if (row === null) return
 
-    const outcome = yield* evaluator.evaluate(toEvaluationColumn(column), row.data).pipe(
+    const outcome = yield* evaluator.evaluate(toEvaluationColumn(column), row.data, extras).pipe(
       Effect.map((evaluated): RowOutcome => ({ _tag: "evaluated", evaluated })),
       Effect.catchIf(
         (error): error is EvaluationError => error instanceof EvaluationError,
@@ -128,6 +135,7 @@ export const handleRow = (
         sufficiency: null,
         status: "failed",
         criteriaVersion: column.criteria_version,
+        answers: null,
         detail: null,
         providerResponse: { error: outcome.reason }
       })
@@ -144,6 +152,7 @@ export const handleRow = (
       sufficiency: result.sufficiency,
       status: result.status,
       criteriaVersion: column.criteria_version,
+      answers: outcome.evaluated.answers,
       detail: result.detail,
       providerResponse
     })
