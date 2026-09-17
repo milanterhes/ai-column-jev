@@ -232,4 +232,24 @@ mechanical.
 | T13–T15 | Escalation, entity resolution, explain-this-result |
 | T18 | Foreign key to `user` |
 | T20 | Connector sync |
-| — | The row-detail panel does not yet render the extra answers. They are stored and returned by the API; nothing displays them. |
+| ~~—~~ | ~~The row-detail panel does not render the extra answers~~ — **done.** Both UI gaps closed and verified in a browser: the drawer has an "Also ask" editor, and the row detail renders each extra answer. |
+
+
+---
+
+## Status, fourth pass — T04/T05 is now reachable
+
+The last pass left the mechanism built and unreachable. Both gaps are closed:
+
+- **The add-column drawer** has an **"Also ask"** section: add up to five extra
+  questions, each Yes/No or Low→High, with the ask priced honestly in the copy.
+- **The row detail** renders them under **"Also asked"**, formatted from the raw
+  provider answer — `Does this report a bug?  No 77%`,
+  `How frustrated is the customer?  Low 56%`.
+
+Verified in a browser end to end, not just by curl.
+
+**Known limitation:** extra questions get a fixed label set rather than a
+per-question editor. That was deliberate — the point of an extra is that it is
+cheap to try, and a full label editor per extra would make asking expensive —
+but it does mean a score extra is always Low/Medium/High.

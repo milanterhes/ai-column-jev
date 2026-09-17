@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { Button } from "../../components/ui/button.tsx"
 import { NativeSelect, NativeSelectOption } from "../../components/ui/native-select.tsx"
 import type { AiColumnDto, DatasetDetail, DatasetRowDto, ResultDto } from "../api/client.ts"
-import { formatConfidence, statusLabel, statusText } from "../lib/format.ts"
+import { formatAnswer, formatConfidence, statusLabel, statusText } from "../lib/format.ts"
 
 interface RowDetailPanelProps {
   dataset: DatasetDetail
@@ -128,6 +128,30 @@ export function RowDetailPanel({
                 </div>
               ))}
             </div>
+          </section>
+        ) : null}
+
+        {column.questions.length > 0 && result !== undefined ? (
+          <section className="border-b border-border px-4 py-3">
+            <p className="mb-2 text-xs font-medium text-muted-foreground">Also asked</p>
+            <dl className="flex flex-col gap-1.5">
+              {column.questions.map((question) => (
+                <div
+                  key={question.key}
+                  className="grid grid-cols-[1fr_auto] items-baseline gap-3"
+                >
+                  <dt className="text-xs text-muted-foreground" title={question.instruction}>
+                    {question.instruction}
+                  </dt>
+                  <dd className="text-xs tabular-nums">
+                    {formatAnswer(result.answers?.[question.key])}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+            <p className="mt-2 text-[10px] text-muted-foreground">
+              Asked in the same request as the answer above, so they cost almost nothing extra.
+            </p>
           </section>
         ) : null}
 

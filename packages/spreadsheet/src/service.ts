@@ -106,6 +106,13 @@ export const getDataset = (userId: string, datasetId: string) =>
       [repo.listRows(datasetId), repo.listAiColumns(datasetId)],
       { concurrency: 2 }
     )
+    const questionsByColumn = new Map(
+      yield* Effect.forEach(
+        columns,
+        (column) => repo.listQuestions(column.id).pipe(Effect.map((qs) => [column.id, qs] as const)),
+        { concurrency: 2 }
+      )
+    )
 
     return {
       ...toSummary(dataset),
@@ -120,7 +127,13 @@ export const getDataset = (userId: string, datasetId: string) =>
         type: column.type,
         instruction: column.instruction,
         labels: column.labels,
-        needsReviewThreshold: column.needs_review_threshold
+        needsReviewThreshold: column.needs_review_threshold,
+        questions: (questionsByColumn.get(column.id) ?? []).map((question) => ({
+          key: question.key,
+          type: question.type,
+          instruction: question.instruction,
+          labels: question.labels
+        }))
       }))
     }
   })
@@ -639,7 +652,6 @@ export const exportCsv = (
       [repo.listRows(datasetId), repo.listAiColumns(datasetId)],
       { concurrency: 2 }
     )
-
     const perColumn = yield* Effect.forEach(
       columns,
       (column) =>

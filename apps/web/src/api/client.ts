@@ -9,6 +9,11 @@ export type ResultStatus =
 export interface Label {
   name: string
   description?: string | undefined
+  /** Structured criteria sent to the provider. See corrections.md. */
+  what?: string | undefined
+  notFor?: string | undefined
+  examples?: string[] | undefined
+  signals?: string[] | undefined
 }
 
 export interface DatasetSummary {
@@ -27,6 +32,13 @@ export interface DatasetRowDto {
   data: Record<string, string>
 }
 
+export interface QuestionDto {
+  key: string
+  type: ColumnType
+  instruction: string
+  labels: Label[]
+}
+
 export interface AiColumnDto {
   id: string
   name: string
@@ -34,6 +46,8 @@ export interface AiColumnDto {
   instruction: string
   labels: Label[]
   needsReviewThreshold: number
+  /** Extra questions evaluated in the same request as the column's own. */
+  questions: QuestionDto[]
 }
 
 export interface DatasetDetail extends DatasetSummary {
@@ -54,6 +68,8 @@ export interface ResultDto {
   status: ResultStatus
   distribution: DistributionEntry[]
   correctedValue: string | null
+  /** Raw provider answer per extra question, keyed by the question's key. */
+  answers: Record<string, unknown>
 }
 
 export interface NewColumnInput {
@@ -62,6 +78,7 @@ export interface NewColumnInput {
   instruction: string
   labels: Label[]
   needsReviewThreshold?: number | undefined
+  questions?: QuestionDto[] | undefined
 }
 
 export interface ImproveInstructionInput {

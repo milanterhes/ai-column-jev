@@ -49,6 +49,28 @@ const signatureOf = (
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+interface ExtraDraft {
+  type: "yes_no" | "score"
+  instruction: string
+}
+
+/**
+ * Extra questions get a fixed label set. Editing them per question is a
+ * reasonable next step; it is not here because the point of an extra is that it
+ * is cheap to try, and a label editor per extra would make it expensive to ask.
+ */
+const extraLabels = (type: ExtraDraft["type"]): Label[] =>
+  type === "yes_no"
+    ? [
+        { name: "Yes", what: "The answer is yes" },
+        { name: "No", what: "The answer is no" }
+      ]
+    : [
+        { name: "Low" },
+        { name: "Medium" },
+        { name: "High" }
+      ]
+
 export function AddColumnDrawer({
   datasetId,
   headers,
@@ -62,6 +84,7 @@ export function AddColumnDrawer({
   const [instruction, setInstruction] = useState("")
   const [labels, setLabels] = useState<Label[]>(() => defaultLabels("yes_no"))
   const [threshold, setThreshold] = useState(0.8)
+  const [extras, setExtras] = useState<ExtraDraft[]>([])
   const [previewCount, setPreviewCount] = useState(10)
   const [createdId, setCreatedId] = useState<string | null>(null)
   const [createdSignature, setCreatedSignature] = useState<string | null>(null)
@@ -92,12 +115,29 @@ export function AddColumnDrawer({
     ]
   }, [headers])
 
+  const addExtra = () => {
+    setExtras((current) =>
+      current.length >= 5 ? current : [...current, { type: "yes_no", instruction: "" }]
+    )
+  }
+
+  const updateExtra = (index: number, patch: Partial<ExtraDraft>) => {
+    setExtras((current) =>
+      current.map((extra, position) => (position === index ? { ...extra, ...patch } : extra))
+    )
+  }
+
+  const removeExtra = (index: number) => {
+    setExtras((current) => current.filter((_, position) => position !== index))
+  }
+
   const reset = () => {
     setName("")
     setType("yes_no")
     setInstruction("")
     setLabels(defaultLabels("yes_no"))
     setThreshold(0.8)
+    setExtras([])
     setPreviewCount(10)
     setCreatedId(null)
     setCreatedSignature(null)
@@ -154,7 +194,7 @@ export function AddColumnDrawer({
   }
 
   const ensureColumn = async (): Promise<string | null> => {
-    const signature = signatureOf(name, type, instruction, labels)
+    const signature = signatureOf(name, type, instruction, labels) + JSON.stringify(extras)
     if (createdId !== null && createdSignature === signature) return createdId
     if (createdId !== null) {
       await api.deleteColumn(datasetId, createdId)
@@ -166,7 +206,15 @@ export function AddColumnDrawer({
       type,
       instruction: instruction.trim(),
       labels,
-      needsReviewThreshold: threshold
+      needsReviewThreshold: threshold,
+      questions: extras
+        .filter((extra) => extra.instruction.trim() !== "")
+        .map((extra, index) => ({
+          key: `q${index + 1}`,
+          type: extra.type,
+          instruction: extra.instruction.trim(),
+          labels: extraLabels(extra.type)
+        }))
     })
     setCreatedId(column.id)
     setCreatedSignature(signature)
@@ -441,6 +489,41 @@ export function AddColumnDrawer({
                 className="w-20"
               />
             </label>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium">Also ask</span>
+              <Button variant="ghost" size="sm" onClick={addExtra} disabled={extras.length >= 5}>
+                Add a question
+              </Button>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Asked in the same request as the question above, so they cost a fraction more rather
+              than doubling the run. They appear in the row detail.
+            </p>
+            {extras.map((extra, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <NativeSelect
+                  value={extra.type}
+                  size="sm"
+                  onChange={(event) =>
+                    updateExtra(index, { type: event.target.value as ExtraDraft["type"] })
+                  }
+                >
+                  <NativeSelectOption value="yes_no">Yes / No</NativeSelectOption>
+                  <NativeSelectOption value="score">Low → High</NativeSelectOption>
+                </NativeSelect>
+                <Input
+                  value={extra.instruction}
+                  onChange={(event) => updateExtra(index, { instruction: event.target.value })}
+                  placeholder="e.g. Does this report a bug?"
+                />
+                <Button variant="ghost" size="sm" onClick={() => removeExtra(index)}>
+                  ×
+                </Button>
+              </div>
+            ))}
           </div>
 
           {error !== null ? (

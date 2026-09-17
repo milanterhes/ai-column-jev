@@ -62,3 +62,44 @@ export const columnTypeLabel = (type: string): string => {
       return type
   }
 }
+
+
+/**
+ * Render a raw provider answer — the shape Jev returns for one question —
+ * as something readable. Kept here rather than in the panel because the
+ * vocabulary it decodes is the provider's, not the UI's.
+ */
+export const formatAnswer = (answer: unknown): string => {
+  if (answer === null || typeof answer !== "object") return "—"
+  const record = answer as Record<string, unknown>
+
+  if (record["type"] === "noul") {
+    const p = Number(record["noul"] ?? 0)
+    return p >= 0.5 ? `Yes ${(p * 100).toFixed(0)}%` : `No ${((1 - p) * 100).toFixed(0)}%`
+  }
+
+  if (record["type"] === "choice") {
+    const confidence = record["confidence"]
+    const value = String(record["choice"] ?? "—")
+    return typeof confidence === "number"
+      ? `${value} ${(confidence * 100).toFixed(0)}%`
+      : value
+  }
+
+  if (record["type"] === "score") {
+    const probabilities = record["probabilities"] as Record<string, number> | undefined
+    const best = Object.entries(probabilities ?? {}).sort((a, b) => b[1] - a[1])[0]
+    if (best === undefined) return "—"
+    const legend = record["legend"] as Record<string, unknown> | undefined
+    const entry = legend?.[best[0]]
+    const label =
+      typeof entry === "string"
+        ? entry
+        : typeof entry === "object" && entry !== null && "summary" in entry
+          ? String((entry as { summary: unknown }).summary)
+          : best[0]
+    return `${label} ${(best[1] * 100).toFixed(0)}%`
+  }
+
+  return "—"
+}
