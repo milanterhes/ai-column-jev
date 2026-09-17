@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:18
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: ai_column
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql
+
+  # Required by Effect's RateLimiter, whose only non-memory store is Redis.
+  # See the map's decision "Batch-run semantics".
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+
+  garage:
+    image: dxflrs/garage:v2.4.1
+    command: ["/garage", "server", "--single-node", "--default-bucket"]
+    ports:
+      - "3900:3900"
+      - "3901:3901"
+      - "3903:3903"
+    environment:
+      # Garage auto-creates a default key + bucket (v2.3+); these must match
+      # the STORAGE_* vars in .env so the app can talk to it.
+      GARAGE_DEFAULT_ACCESS_KEY: GK97bcef0d8a1e2c3d4e5f60718293a4b5c
+      GARAGE_DEFAULT_SECRET_KEY: 27f2c8b9d01a4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e
+      GARAGE_DEFAULT_BUCKET: ai-column-datasets
+    volumes:
+      - ./docker/garage.toml:/etc/garage.toml
+      - garagemeta:/var/lib/garage/meta
+      - garagedata:/var/lib/garage/data
+
+volumes:
+  pgdata:
+  redisdata:
+  garagemeta:
+  garagedata:

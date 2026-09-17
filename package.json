@@ -1,0 +1,43 @@
+{
+  "name": "ai-column",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "turbo run dev --filter @app/web --filter @app/worker",
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint",
+    "migrate": "tsx scripts/migrate.ts",
+    "setup:object-storage": "tsx scripts/setup-object-storage.ts"
+  },
+  "dependencies": {
+    "@app/auth": "workspace:*",
+    "@app/core": "workspace:*",
+    "@app/evaluate": "workspace:*",
+    "@app/spreadsheet": "workspace:*",
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-pg": "catalog:",
+    "effect": "catalog:",
+    "pg": "catalog:"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1128.0",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "@types/pg": "catalog:",
+    "tsx": "catalog:",
+    "turbo": "^2.3.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@effect/platform-node-shared": "4.0.0-rc.112",
+      "@effect/platform-node": "4.0.0-rc.112",
+      "@effect/sql-pg": "4.0.0-rc.112",
+      "@effect/atom-react": "4.0.0-rc.112",
+      "@effect/vitest": "4.0.0-rc.112"
+    }
+  }
+}

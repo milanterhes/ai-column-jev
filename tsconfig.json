@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./scripts" },
+    { "path": "./packages/core" },
+    { "path": "./packages/evaluate" },
+    { "path": "./packages/spreadsheet" }
+  ]
+}
