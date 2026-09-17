@@ -62,8 +62,18 @@ export const SUFFICIENCY_ID = "sufficiency"
 /**
  * The Noul sufficiency answer must reach this to count as "we could judge it".
  * Below it the row is `unable_to_determine` and the judgment is discarded.
+ *
+ * **Calibrated against real output, not chosen.** Jev is systematically
+ * under-confident on this question: over 35 support tickets it never returned
+ * more than ~0.97 and put rich, plainly judgeable messages in the 0.4–0.8 band.
+ * The clean separation in that sample is between genuinely unusable rows
+ * (`"help"` 0.08, `" "` 0.06, `"The sync is broken."` 0.20) and ordinary
+ * content (0.37 and up). A gate at 0.5 discarded real rows — an invoice bug
+ * scoring 0.49 was thrown away. 0.3 sits in the empty gap.
+ *
+ * Re-measure before trusting this on a different corpus.
  */
-export const SUFFICIENCY_MIN = 0.5
+export const SUFFICIENCY_MIN = 0.3
 
 export const DEFAULT_NEEDS_REVIEW_THRESHOLD = 0.8
 

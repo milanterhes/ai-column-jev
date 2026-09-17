@@ -468,30 +468,97 @@ export const exportCsv = (
 
 // ── Demo dataset ────────────────────────────────────────────────────────────
 
+/**
+ * The built-in sample. The same rows are downloadable as a CSV from
+ * `apps/web/public/customer-feedback.csv` — keep the two in step.
+ *
+ * Deliberately chosen and shaped to exercise every state the product can show:
+ * free-text tickets rich enough to judge, a handful that are genuinely
+ * ambiguous, and a few that are empty or too thin to judge at all. It ships
+ * with one column of each type, because a Yes/No column alone is the *worst*
+ * showcase for the confidence model — a binary Choice collapses to a
+ * near-certain distribution, so nothing ever lands in "needs review".
+ */
 const DEMO: ReadonlyArray<ReadonlyArray<string>> = [
-  ["Acme", "Acme builds HR software for enterprise companies, sold as a subscription.", "420", "United States"],
-  ["PixelPop", "PixelPop makes photo filters for consumers.", "40", "United States"],
-  ["Northwind Consulting", "Northwind is a consulting firm that builds custom internal tools for clients, sometimes hosted.", "120", "Canada"],
-  ["Vantage Analytics", "Vantage sells a subscription analytics platform to mid-market ecommerce teams.", "85", "United Kingdom"],
-  ["Graze", "Graze is a marketplace connecting freelancers with studios.", "15", "United Kingdom"],
-  ["Ledgerly", "Ledgerly provides bookkeeping software to small accounting firms on a monthly plan.", "60", "Australia"],
-  ["Brightpath", "Brightpath runs coding bootcamps for career changers.", "30", "Ireland"],
-  ["Nimbus Health", "Nimbus Health sells scheduling software to dental practices as a SaaS subscription.", "210", "United States"],
-  ["Vectora", "We make stuff for businesses.", "", "Germany"],
-  ["Corvid Labs", "Corvid Labs is a two-person studio building an open-source compiler, funded by grants.", "2", "Netherlands"],
-  ["Tessellate", "Tessellate sells an API for geospatial routing, billed per request to developers.", "55", "United States"],
-  ["Harbourline", "Harbourline operates physical warehouse space and charges per pallet.", "900", "Singapore"],
-  ["Quill & Co", "Quill & Co is a marketing agency for B2B software companies.", "75", "United States"],
-  ["Fernwood", "Fernwood makes a consumer app for plant identification.", "12", "New Zealand"],
-  ["Cobalt Systems", "Cobalt Systems sells on-premise database licences to government departments.", "340", "United States"],
-  ["Marrow", "Marrow is an early-stage startup with no public description yet.", "4", "France"],
-  ["Sundeck", "Sundeck sells subscription software that schedules shifts for restaurant chains.", "150", "United States"],
-  ["Pelagic", "Pelagic runs a two-sided marketplace matching boat owners with charter customers.", "22", "Croatia"],
-  ["Ironvale", "Ironvale provides managed security services under an annual retainer.", "260", "United Kingdom"],
-  ["Junipersoft", "Junipersoft sells a helpdesk platform to internal IT teams on a per-seat subscription.", "480", "United States"]
+  ["T-1001", "Northwind Analytics", "Pro", "499", "2026-08-04", "Bulk export", "We need to export all our saved reports as CSV in one go. Right now we click through each report one at a time, and with 200+ reports that is a full day of work every month. Is bulk export on the roadmap?"],
+  ["T-1002", "Bluepeak Systems", "Enterprise", "2400", "2026-08-04", "Slack integration", "Please add a Slack integration so my team gets notified when a build fails. We would happily pay extra for this one."],
+  ["T-1003", "Vantage Analytics", "Starter", "79", "2026-08-05", "Dates off by one", "Every invoice dated the 1st is showing as the previous day in the PDF. The data is correct in the dashboard but wrong in the download. This started after your Tuesday deploy."],
+  ["T-1004", "Harbourline", "Pro", "620", "2026-08-05", "Login loop", "I sign in, get redirected to the dashboard, and am immediately bounced back to the login page. Chrome and Safari, same thing, incognito too. I cannot work today."],
+  ["T-1005", "Ironvale Security", "Enterprise", "3100", "2026-08-06", "Renewal conversation", "We have had three outages this quarter and our team has lost confidence in the platform. We are evaluating two competitors and honestly need a reason to stay."],
+  ["T-1006", "Fernwood Labs", "Starter", "49", "2026-08-06", "Cancel our subscription", "Please cancel our subscription at the end of the month. We have moved to a competitor that includes the reporting we kept asking for."],
+  ["T-1007", "Quill and Co", "Pro", "310", "2026-08-07", "Double charged", "We were billed twice this month. Two identical charges on the 3rd, same amount, same card. Please refund one of them."],
+  ["T-1008", "Corvid Labs", "Free", "0", "2026-08-07", "API rate limits", "What are the rate limits on the read API? I could not find this in the documentation anywhere."],
+  ["T-1009", "Tessellate", "Pro", "700", "2026-08-08", "Dashboard is very slow", "Our main dashboard takes 25 to 30 seconds to load since we crossed 50,000 records. It used to be instant. This is slowing down our entire ops team every morning."],
+  ["T-1010", "Pelagic", "Starter", "99", "2026-08-08", "Filter behaviour", "When I filter by region the date column resets to blank. I am not sure if that is intended but it is annoying and I have to re-enter dates constantly."],
+  ["T-1011", "Graze", "Free", "0", "2026-08-09", "help", "help"],
+  ["T-1012", "Marrow", "Starter", "49", "2026-08-09", "Issue", "It is not working again."],
+  ["T-1013", "Brightpath", "Free", "0", "2026-08-10", "?", "?"],
+  ["T-1014", "Sundeck", "Pro", "540", "2026-08-10", "", ""],
+  ["T-1015", "Ledgerly", "Pro", "380", "2026-08-11", "Sync", "The sync is broken."],
+  ["T-1016", "Nimbus Health", "Enterprise", "1800", "2026-08-11", "Thank you", "Just wanted to say the new scheduling view is a huge improvement. Our front desk saves about an hour a day. Please keep going in this direction."],
+  ["T-1017", "Cobalt Systems", "Enterprise", "4200", "2026-08-12", "SAML SSO", "We need SAML SSO before we can roll this out beyond the pilot team. Our security review will not pass without it. Is this on the roadmap, and roughly when?"],
+  ["T-1018", "Vantage Analytics", "Starter", "79", "2026-08-12", "Export broken again", "Same export problem as last month, ticket T-0412. Large exports still time out after about five minutes and produce a partial file with no warning."],
+  ["T-1019", "Bluepeak Systems", "Enterprise", "2400", "2026-08-13", "Onboarding call", "Can we schedule a walkthrough for the two new analysts joining next week? Nothing urgent, just want them comfortable before quarter end."],
+  ["T-1020", "Riverbend Retail", "Pro", "850", "2026-08-13", "Reports wrong for Q3", "Our Q3 revenue report is showing roughly 40% lower than our own numbers. I have checked our raw data twice and I am confident the report is wrong. This is blocking our board pack."],
+  ["T-1021", "Ashgrove Media", "Starter", "120", "2026-08-14", "Feature request or bug?", "When I duplicate a saved view it copies the filters but not the column order. I cannot tell whether that is by design or a bug, but it makes duplication almost useless for us."],
+  ["T-1022", "Kestrel Freight", "Pro", "1100", "2026-08-14", "Cancelling in 30 days", "After nine months we are cancelling. Two of our three requested features shipped for other customers but never for us, and support response times have gone from hours to days."],
+  ["T-1023", "Lumen Partners", "Enterprise", "5600", "2026-08-15", "Security questionnaire", "Our procurement team needs a completed security questionnaire and a copy of your SOC 2 report before we can expand to the European entity. Who should I send this to?"],
+  ["T-1024", "Thicket", "Free", "0", "2026-08-15", "Slow", "slow"],
+  ["T-1025", "Orchard Field", "Pro", "430", "2026-08-16", "Time zone bug", "Scheduled reports are firing in UTC instead of the account time zone. Our weekly summary arrived at 3am local instead of 8am. We set the time zone in settings and it appears to be ignored."],
+  ["T-1026", "Beacon Insights", "Starter", "95", "2026-08-16", "Hopefully helpful feedback", "The product is good. Some parts of the UI are confusing, particularly the settings area, and I think a redesign would help. No urgency at all, just sharing."],
+  ["T-1027", "Pinewood Group", "Enterprise", "2900", "2026-08-17", "Data missing after import", "We imported 12,000 rows yesterday and only 7,400 appear in the table. The import said it succeeded. The missing rows are simply absent with no error, and we need them for month end close."],
+  ["T-1028", "Sable and Stone", "Pro", "255", "2026-08-17", "Hire more support staff", "Response times have slipped badly. I waited three days for a reply on a billing question. The product is fine, the support is not, and that is why we are looking around."],
+  ["T-1029", "Meridian Labs", "Enterprise", "3900", "2026-08-18", "Audit log retention", "How long do you retain audit logs, and can we configure that per workspace? Our compliance team needs a documented answer rather than a guess."],
+  ["T-1030", "Willowbrook", "Starter", "65", "2026-08-18", "It broke", "Everything broke this morning."],
+  ["T-1031", "Foxglove Analytics", "Pro", "780", "2026-08-19", "Duplicate rows in export", "Every export now contains the header row twice and a handful of rows duplicated. I can work around it by deduplicating in Excel but it is clearly a bug and it has cost us a day of cleanup."],
+  ["T-1032", "Thornbury Health", "Enterprise", "2100", "2026-08-19", "Contract expansion", "We are ready to expand from 40 to 120 seats. What does the pricing look like at that volume, and can we get priority support included?"],
+  ["T-1033", "Nettle and Fern", "Free", "0", "2026-08-20", "Random", "Just looking around, no question yet."],
+  ["T-1034", "Glasswing", "Pro", "340", "2026-08-20", "Please add dark mode", "Dark mode would genuinely help. Our team works late and the white interface is harsh. I know it is cosmetic but it comes up in every team meeting."],
+  ["T-1035", "Bracken Systems", "Pro", "920", "2026-08-21", "Critical - data leak risk", "I am fairly sure I can see another workspace's saved queries when I use the search box. I have not clicked into anything but the names are visible and they are not ours. Please treat this as urgent."]
 ]
 
-const DEMO_HEADERS = ["company", "description", "employee_count", "country"]
+const DEMO_HEADERS = ["ticket_id", "account", "plan", "mrr_usd", "submitted_at", "subject", "message"]
+
+const DEMO_COLUMNS: ReadonlyArray<{
+  readonly name: string
+  readonly type: "yes_no" | "category" | "score"
+  readonly instruction: string
+  readonly labels: ReadonlyArray<{ readonly name: string; readonly description: string }>
+}> = [
+  {
+    name: "Feature request?",
+    type: "yes_no",
+    instruction: "Is this customer asking for functionality that does not exist yet?",
+    labels: [
+      { name: "Yes", description: "The customer is asking for functionality that does not exist yet." },
+      { name: "No", description: "The customer is not asking for new functionality." }
+    ]
+  },
+  {
+    name: "Issue type",
+    type: "category",
+    instruction: "What kind of issue is this?",
+    labels: [
+      { name: "Bug", description: "Something that should work is broken or produces wrong output." },
+      { name: "Feature request", description: "A request for functionality that does not exist yet." },
+      { name: "Question", description: "A request for information, documentation or process." },
+      { name: "Billing", description: "Anything about charges, invoices, refunds or plans." },
+      { name: "Performance", description: "Slowness, timeouts or resource problems." },
+      { name: "Praise", description: "Positive feedback with no request attached." }
+    ]
+  },
+  {
+    name: "Urgency",
+    type: "score",
+    instruction: "How urgent is this for the customer?",
+    labels: [
+      { name: "Critical", description: "Blocking work now, or a security or data-loss risk." },
+      { name: "High", description: "Seriously impeding the team, needs attention this week." },
+      { name: "Medium", description: "A real problem but there is a workaround." },
+      { name: "Low", description: "Nice to have, cosmetic, or informational." }
+    ]
+  }
+]
 
 export const createDemoDataset = (userId: string) =>
   Effect.gen(function*() {
@@ -501,31 +568,29 @@ export const createDemoDataset = (userId: string) =>
     yield* repo.insertDataset({
       id,
       userId,
-      name: "Sample companies",
-      filename: "sample-companies.csv",
+      name: "Sample support tickets",
+      filename: "customer-feedback.csv",
       columns: DEMO_HEADERS,
       storageKey: null
     })
     yield* repo.insertRows(id, rows)
 
-    const columnId = newId()
-    yield* repo.insertAiColumn({
-      id: columnId,
-      datasetId: id,
-      name: "B2B SaaS?",
-      type: "yes_no",
-      instruction: "Is this company primarily a B2B SaaS company?",
-      labels: [
-        { name: "Yes", description: "Primarily sells software as a service to businesses." },
-        { name: "No", description: "Does not primarily sell B2B SaaS." }
-      ],
-      needsReviewThreshold: 0.8
-    })
+    for (const column of DEMO_COLUMNS) {
+      yield* repo.insertAiColumn({
+        id: newId(),
+        datasetId: id,
+        name: column.name,
+        type: column.type,
+        instruction: column.instruction,
+        labels: [...column.labels],
+        needsReviewThreshold: 0.8
+      })
+    }
 
     return {
       id,
-      name: "Sample companies",
-      filename: "sample-companies.csv",
+      name: "Sample support tickets",
+      filename: "customer-feedback.csv",
       rowCount: rows.length,
       columnCount: DEMO_HEADERS.length,
       columns: DEMO_HEADERS,

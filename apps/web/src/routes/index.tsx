@@ -118,6 +118,18 @@ function LandingPage() {
               </Link>
             ) : null}
           </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Want to try your own data?{" "}
+            <a
+              href="/customer-feedback.csv"
+              download
+              className="underline underline-offset-4 hover:text-foreground"
+            >
+              Download a sample CSV
+            </a>{" "}
+            — 35 support tickets, one of each column type, with a few rows deliberately too thin to
+            judge.
+          </p>
         </section>
 
         <section className="border-b border-border py-12">

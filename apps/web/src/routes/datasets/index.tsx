@@ -74,6 +74,16 @@ function DatasetsPage() {
               </Button>
               <Button onClick={() => setUploadOpen(true)}>Upload CSV</Button>
             </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              <a
+                href="/customer-feedback.csv"
+                download
+                className="underline underline-offset-4 hover:text-foreground"
+              >
+                Download a sample CSV
+              </a>{" "}
+              to upload yourself — 35 support tickets covering every column type.
+            </p>
           </div>
         ) : (
           <ul className="divide-y divide-border">

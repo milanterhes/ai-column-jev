@@ -9,30 +9,50 @@ and it is the first thing below.
 
 ---
 
-## The headline: Jev broke one of our assumptions
+## The headline: Jev's confidence behaves differently per column type
 
-**The integration is real and verified.** But probing it — and then confirming it across a
-full 20-row run — surfaced a material contradiction with the spec:
+**The integration is real and verified.** But running a 35-row sample across all three column
+types (see below) produced a finding that **corrects an earlier, too-broad version of this
+note**. The first pass only tested a Yes/No column and concluded the review workflow could
+never trigger. That was wrong — it is specific to one column type.
 
-> **Jev's judgment distributions are extremely peaked. Of 20 rows evaluated, 17 came back at
-> confidence 0.97–1.00 and 3 were `unable_to_determine`. `needs_review` fired zero times.**
+**Across 35 support tickets:**
 
-The probability distribution across all 20 rows was `{1.00: 15, 0.99: 1, 0.97: 1}`. Nothing
-ever landed below the `0.8` threshold.
+| Column type | High confidence | Needs review | Unable to determine |
+| --- | --- | --- | --- |
+| Yes/No — "Feature request?" | 23 | **1** | 11 |
+| Category — "Issue type" | 22 | **5** | 8 |
+| Score — "Urgency" | 10 | **16** | 9 |
 
-Jev is a *decision* model — it is built to be decisive — so its `probabilities` carry almost
-no graded uncertainty. The consequence is serious: **the review workflow, a headline feature,
-is driven by a threshold that cannot fire.** The graded signal Jev *does* emit is the **Noul
-sufficiency** probability, which ranged 0.05–0.97 and correctly caught every unusable row.
+**`needs_review` works fine for Category and Score.** Those columns produce genuine
+distributions — confidences ranging 0.5–1.0, with a real ⚠ tail. The problem is **binary
+Yes/No specifically**: a two-option Choice collapses to a near-certain distribution (every
+judged row came back 0.96–1.00), so a threshold on confidence can never fire there. That is a
+property of asking a yes/no question, not a flaw in the confidence model.
 
-**Recommended fix (NOT applied — your call):** drive `needs_review` from **sufficiency**, not
-from judgment peakedness — e.g. sufficiency `< 0.5` → `unable_to_determine`, `< 0.9` →
-`needs_review`, else `high_confidence`, keeping the winner's share as the displayed
-`confidence`. `sufficiency` is already stored on every result, so this is a threshold change,
-not a re-architecture. I implemented the spec **as written** rather than silently redesigning
-it. It is the single thing I would want you to look at first.
+**A second, separate bug this exposed: the sufficiency gate was miscalibrated.** It sat at
+`0.5`, and Jev is systematically *under*-confident on the sufficiency question — it put rich,
+plainly judgeable messages in the 0.4–0.8 band. An invoice bug scoring `0.49` was being thrown
+away as unusable. The clean separation in the data is between genuinely unusable rows
+(`"help"` 0.08, `" "` 0.06, `"The sync is broken."` 0.20) and ordinary content (0.37 and up).
+**I moved it to `0.3`**, which sits in the empty gap, and documented the evidence in
+`packages/evaluate/src/core.ts`.
 
----
+### Still open, and the real remaining question
+
+**The sufficiency question's wording is subtly wrong.** It asks *"is there enough information
+here to answer X?"* — which fails on rows where the **absence** of information *is* the answer.
+A clear bug report contains nothing about feature requests, so it scores low sufficiency for
+"Is this a feature request?" and gets discarded, when the correct answer is plainly "No". That
+is why the Yes/No column still has 11 `unable_to_determine`. The question should be framed
+around whether the row contains what the judgment *needs*, not whether the judgment feels
+answerable. Worth fixing before trusting `unable_to_determine` counts.
+
+**Recommended next step:** offer both signals per column type. For Category and Score, the
+confidence threshold works and should carry on. For Yes/No, either fall back to sufficiency or
+drop `needs_review` for binary columns entirely, since the model is effectively deterministic
+there. I implemented the spec **as written** apart from the threshold move, rather than
+redesigning it quietly.
 
 ## What is built and verified
 
@@ -75,6 +95,29 @@ Acme,"Acme builds HR software for enterprise companies, sold as a subscription."
 - **`apps/worker`** — a stub. See limitations.
 
 ---
+
+## The sample CSV — `apps/web/public/customer-feedback.csv`
+
+Downloadable from the landing page and the empty datasets screen, and it is the same data
+"Try it with sample data" loads. **35 support tickets**, columns
+`ticket_id, account, plan, mrr_usd, submitted_at, subject, message`.
+
+It is engineered rather than grabbed, because only *some* rows are interesting to a model like
+Jev:
+
+- **Rich, specific messages** for most rows, so the judgments have something to bite on.
+- **Rows with no useful content** — `"help"`, `"?"`, an empty message, `"Everything broke this
+  morning."` — which is what drives `unable_to_determine` and fills the review queue.
+- **Genuinely ambiguous rows** — a ticket that could be a bug *or* a feature request, a
+  cancellation that is also a churn signal, praise that is also a feature hint. These are what
+  produce `needs_review`.
+- **A `plan` / `mrr_usd` spread**, so "does this indicate churn risk?" has something to weigh.
+- **One ticket reporting a possible cross-workspace data leak**, so an urgency score has a real
+  top of the range.
+
+It ships with **one column of each type** — Yes/No, Category, and Score — because a Yes/No
+column alone is the *worst* showcase for the confidence model, and that is exactly what the
+original built-in demo had.
 
 ## What is *not* done
 
