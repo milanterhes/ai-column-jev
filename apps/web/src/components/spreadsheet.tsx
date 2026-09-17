@@ -231,6 +231,19 @@ export function Spreadsheet({
     onSearchChange({ ...search, hide: serializeHidden(next) })
   }
 
+  const [running, setRunning] = useState<string | null>(null)
+
+  const runColumn = async (columnId: string, mode: "preview" | "run") => {
+    setRunning(`${columnId}:${mode}`)
+    try {
+      if (mode === "preview") await api.previewColumn(dataset.id, columnId, 10)
+      else await api.runColumn(dataset.id, columnId)
+      onChanged()
+    } finally {
+      setRunning(null)
+    }
+  }
+
   const correct = async (columnId: string, rowId: string, value: string) => {
     await api.putCorrection(dataset.id, columnId, rowId, value)
     onChanged()
@@ -338,6 +351,29 @@ export function Spreadsheet({
                   </button>
                 )
               })}
+              <div className="ml-1 flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => void runColumn(column.id, "preview")}
+                  disabled={running !== null}
+                  className="border border-border px-1.5 py-0.5 text-[10px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                >
+                  {running === `${column.id}:preview` ? "Previewing…" : "Preview 10"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runColumn(column.id, "run")}
+                  disabled={running !== null}
+                  className={cn(
+                    "border px-1.5 py-0.5 text-[10px] transition-colors disabled:opacity-50",
+                    (resultsByColumn[column.id] ?? []).length > 0
+                      ? "border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+                      : "border-foreground bg-foreground text-background"
+                  )}
+                >
+                  {running === `${column.id}:run` ? "Running…" : "Run all"}
+                </button>
+              </div>
             </div>
           ))}
           <span className="ml-auto text-xs text-muted-foreground">

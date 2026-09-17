@@ -217,7 +217,9 @@ export function ReviewWorkflow({
                   disabled={busy}
                 >
                   {label.name}
-                  <span className="ml-1 text-[10px] text-muted-foreground">{index + 1}</span>
+                  <span className="ml-1 text-[10px] text-muted-foreground">
+                    {column.type === "yes_no" ? (index === 0 ? "Y" : "N") : index + 1}
+                  </span>
                 </Button>
               ))}
               <Button variant="ghost" onClick={skip} disabled={busy}>

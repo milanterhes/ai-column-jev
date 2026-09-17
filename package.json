@@ -4,12 +4,13 @@
   "type": "module",
   "packageManager": "pnpm@9.15.0",
   "scripts": {
-    "dev": "turbo run dev --filter @app/web --filter @app/worker",
     "build": "turbo run build",
-    "test": "turbo run test",
+    "demo": "bash scripts/demo.sh",
+    "dev": "turbo run dev --filter @app/web --filter @app/worker",
     "lint": "turbo run lint",
     "migrate": "tsx scripts/migrate.ts",
-    "setup:object-storage": "tsx scripts/setup-object-storage.ts"
+    "setup:object-storage": "tsx scripts/setup-object-storage.ts",
+    "test": "turbo run test"
   },
   "dependencies": {
     "@app/auth": "workspace:*",

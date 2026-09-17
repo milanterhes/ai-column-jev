@@ -46,10 +46,12 @@ Every claim below was run against the live API and a real Postgres, not reasoned
 | Preview on a spread of rows | ✅ verified (real Jev calls) |
 | Full run | ✅ verified (20/20 rows evaluated) |
 | Confidence + the four statuses | ✅ verified |
-| Corrections (create + revert) | ✅ verified |
-| CSV export | ✅ verified (original columns verbatim, then value + confidence) |
+| Corrections (create + revert) | ✅ verified (persistent "edited" marker) |
+| Review workflow, keyboard-driven | ✅ verified (Y advanced the queue) |
+| CSV export | ✅ verified (correction reflected) |
 | `pnpm lint` (whole workspace) | ✅ 10/10 tasks clean |
 | `pnpm build` | ✅ 6/6 tasks |
+| **Browser click-through** | ✅ **whole demo driven by hand, zero console errors** |
 
 Actual export from the run:
 
@@ -88,8 +90,9 @@ I would rather be blunt than flattering.
 - **No foreign key to better-auth's `user` table.** The ownership column exists and every
   query is scoped by it, but the FK is absent because it must be added *after* auth
   migrations. The migration order is already correct for it.
-- **The UI is built and typechecks and the production build succeeds, but I did not click
-  through it in a browser.** I verified the API it calls, not the pixels.
+- **The UI is built, typechecks, builds, and I drove the whole demo by hand in a browser.**
+  Landing → sign in → sample data → run → row detail → correction → review → export, with zero
+  console errors or warnings.
 - **XLSX, saved rules, templates, billing, and the LLM "Explain result"** are out of scope by
   decision, not by omission.
 - **No remote, so no PR.** The work is on the branch `feat/semantic-spreadsheet` with one
@@ -114,14 +117,30 @@ I also made two calls worth naming:
 
 ## Running it
 
+**One command:**
+
 ```bash
-pnpm install
-docker compose up -d postgres redis garage
-pnpm migrate
-pnpm dev          # http://localhost:3000
+pnpm demo
 ```
 
-Sign in with any email; the six-digit code is printed to the server terminal. Then
-**Try it with sample data** on the landing page.
+That starts Postgres and Redis, waits for them, applies migrations, and boots the app. It is
+safe to re-run. If `.env` is missing it will create one from `.env.example` and tell you to add
+your key.
+
+Then open <http://localhost:3000>, sign in with any email (the six-digit code is printed in the
+terminal), and click **Try it with sample data**. The column ships unevaluated, so press
+**Run all** in the AI column bar to watch it work.
+
+<details>
+<summary>Or step by step</summary>
+
+```bash
+pnpm install
+docker compose up -d postgres redis
+pnpm migrate
+pnpm dev
+```
+
+</details>
 
 `.env` already has your `JEV_KEY` and a generated `BETTER_AUTH_SECRET`. It is gitignored.
