@@ -1,269 +1,194 @@
-# Scaffold
+# AI Column
 
-A production-shaped starter for a full-stack TypeScript app: session-based
-authentication, a Postgres-backed domain, and object storage — wired together,
-tested, and ready to copy. Everything is **Effect-first**: the API, the auth
-protocol, the database layer, and the tests are built on
-[Effect](https://effect.website/) 4. The front end is TanStack Start + React +
-shadcn, consuming a typed client generated from the same `HttpApi` contract the
-server implements.
+A self-serve web app where you upload a CSV, add **AI columns** that need
+human-like judgment, inspect the results with their confidence, review the rows
+the model is unsure about, and export the enriched CSV.
 
-- **Auth that works out of the box** — email-code sign-in (codes print to the
-  terminal until you add Resend), Google/LinkedIn/GitHub OAuth, HttpOnly
-  sessions with sliding expiry, and account linking. No provider required to
-  try it.
-- **A complete vertical slice to copy** — the `notes` package is the template:
-  schema → Postgres repo → `HttpApi` group → impl → typed client → React page →
-  tests.
-- **Object storage done honestly** — the `documents` package uploads through
-  S3-compatible storage (AWS S3 in production, Garage locally) via presigned
-  URLs; a confirm endpoint HEAD-verifies the object before the row flips
-  `pending → stored`.
-- **Real infra conventions** — Postgres via Docker, Effect migrations, a
-  dedicated test database, Turbo-driven dev/test/lint/build across the monorepo.
+The thought it is built around is *"I wish this spreadsheet had one more column,
+but a human would have to fill it in."* The product turns that into a **+ AI
+column** button.
+
+Per-row judgment is done by **Jev** (TypeSafe AI's System One model), which
+returns typed probabilistic decisions — a category, a score, a yes/no, each with
+a confidence and an explicit `unable-to-determine`. A general-purpose LLM is
+used **only** to help phrase a rule before any evaluation happens. It never
+evaluates a row.
+
+## The loop
+
+1. **Upload** a CSV. Headers become the spreadsheet; rows are kept in Postgres.
+2. **Add an AI column** — name it, pick a type (`yes_no`, `category`, `score`),
+   and write the instruction the way you'd explain it to a careful colleague.
+   **Preview** it against a sample before committing.
+3. **Run it** over every row. The run goes to a background queue and returns
+   immediately; results stream in.
+4. **Review** the rows whose confidence fell below the column's threshold —
+   correct them in place.
+5. **Report** on the column: agreement from your corrections, the confidence
+   distribution, and a random audit — the only number nobody selected for.
+6. **Export** the enriched CSV, with each AI column as its own column.
+
+Each column also carries up to **five extra questions** asked in the *same*
+provider request as the column's own question — so a second judgment on the same
+row costs a fraction more rather than doubling the run. They appear in the row
+detail.
 
 ## Quick start
 
 ```bash
-# 1. Install and start infra (Postgres + Garage object storage)
 pnpm install
-docker compose up -d
+cp .env.example .env      # then add your JEV_KEY (a TypeSafe API key)
 
-# 2. Configure env (defaults already point at the Docker services)
-cp .env.example .env
-
-# 3. Migrate, configure object-storage CORS, and run
-pnpm migrate
-pnpm setup:object-storage      # idempotent; only the browser upload path needs it
-pnpm dev                       # http://localhost:3000
+pnpm demo                 # infra up, migrations applied, app started
 ```
 
-Sign in with any email and read the code from the server terminal — you're in.
-The **My notes** link exercises the full vertical slice; the **Documents** link
-runs the upload → presigned PUT → confirm → list/download/delete flow against
-Garage.
+`pnpm demo` is safe to re-run. It brings up Postgres and Redis, waits for
+Postgres, applies migrations, and starts the web app and the evaluation worker.
 
-### Rename it to your project
-
-```bash
-cp -R scaffold my-app && cd my-app
-# Replace the package scope and app name everywhere they appear, then refresh
-# the lockfile.
-grep -rIl --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=.git \
-  --exclude-dir=.turbo --exclude=pnpm-lock.yaml -e '@app' -e 'scaffold' -e 'Scaffold' . \
-  | xargs sed -i '' -e 's/@app/YOUR_SCOPE/g' -e 's/scaffold/my-app/g' -e 's/Scaffold/My App/g'
-rm -rf pnpm-lock.yaml node_modules && pnpm install
-```
-
-Three tokens cover every reference: `@app` (package scope / imports),
-`scaffold` (repo name, Postgres database, model identifier, logger prefix), and
-`Scaffold` (display name in headings and `<title>`).
+Open <http://localhost:3000>, sign in with **any** email address — the six-digit
+code is printed in the terminal you ran the command in — and click **"Try it
+with sample data"** for a 35-ticket support dataset.
 
 ## Repository layout
 
 ```
 apps/
-  web/                 TanStack Start SPA; the Effect HttpApi is mounted at
-                       /api/* inside the same server process.
-    src/api/           HttpApi groups (notes, documents), auth wiring, typed clients
-    src/routes/        __root, index, signin, notes, documents, api/$ (the API splat)
-    components/        shadcn components + the effect-machine uploader
+  web/              TanStack Start + React 19 SPA. The Effect HttpApi is mounted
+                    at /api/* inside the same server process.
+    src/api/        composition root, hand-rolled router, typed fetch client
+    src/components/ the spreadsheet grid, add-column drawer, review workflow
+    src/routes/     datasets (upload + grid), review, report, signin
+  worker/           the queue consumer: claims work, calls Jev, writes results
 packages/
-  auth/                The auth core — pure Effect, no DB/email/HTTP deps:
-                       email-code + OAuth protocol, sessions, linking, privacy.
-                       Defines the AuthStorage and Mailer seams.
-  auth-postgres/       Postgres AuthStorage + OAuthPendingStore, its own schema
-                       (auth.*) and migrations.
-  auth-resend/         Resend mailer. Falls back to a logger mailer with no key.
-  core/                Shared Postgres client (PgLive) + test-database helpers.
-  notes/               Demo domain: Model, migration, repo, schema, tests.
-  documents/           Demo object-storage domain: Model, migration, repo, a
-                       `Storage` seam over S3/Garage (presign, head, delete),
-                       schema, tests.
+  spreadsheet/      the domain. Dataset, dataset_row, ai_column, result,
+                    correction tables; CSV parse and export; column reports
+                    and the random audit.
+  evaluate/         the Jev adapter. Request building, response parsing, the
+                    Noul confidence rule, per-type thresholds, row batching,
+                    and an adaptive Redis-backed rate limiter.
+  queue/            persisted work queue: per-user per-class fairness, reserved
+                    interactive slots, cancel-first handling, retryable vs
+                    terminal failures.
+  auth/             better-auth wiring — sessions, email codes, OAuth.
+  core/             the shared Postgres client (PgLive) and test-database helpers.
 scripts/
-  migrate.ts           Applies app migrations, then the auth schema migrations.
-  setup-object-storage.ts  Configures CORS on the local Garage bucket.
+  demo.sh           one command to run everything
+  migrate.ts        applies every package's migrations, auth first
+docs/               architecture decisions (ADRs) and agent-skill docs
 ```
 
-The `apps/web` app composes the auth, notes, and documents `HttpApi` groups into
-one `WebApi` and mounts it at `/api/*` via a TanStack Start server route
-(`src/routes/api/$.ts`). All packages share one `tsconfig.base.json`
-(`strict`, `exactOptionalPropertyTypes`, `erasableSyntaxOnly`) and one pnpm
-version catalog.
+## How evaluation actually works
 
-## Authentication
+Three decisions are worth knowing before you read the code.
 
-`packages/auth` is deliberately dependency-free. The three external concerns are
-interfaces you provide at the app's composition root
-(`apps/web/src/api/auth.live.ts`):
+**Confidence is not one number.** Jev's confidence means different things per
+output type, so the threshold does too. `yes_no` columns are asked through
+Jev's Noul mode, whose confidence is the probability of the answer it selected —
+they get a **0.6** threshold. `category` and `score` columns get the winning
+label's share, with a **0.8** threshold (`defaultThresholdFor` in
+`packages/evaluate/src/core.ts`). A single threshold would either drown you in
+review for binary columns or hide real uncertainty in category ones.
 
-| Seam | Default implementation | Swap for |
-| --- | --- | --- |
-| `AuthStorage` | Postgres (`auth-postgres`) | In-memory for tests |
-| `Mailer` | Resend (`auth-resend`) | Logger mailer (no key) |
-| `OAuthPendingStore` | Postgres (`auth-postgres`) | In-memory for tests |
+**Rows are batched, not sent one at a time.** Batching 50 rows into one request
+measured ~1.8× cheaper and ~40× faster than 50 separate requests. Bulk runs are
+chunked at `BATCH_CHUNK_SIZE = 100`. The ceiling is request *byte size*, not a
+token count — around 240 rows of the sample data, and the provider fails the
+whole request rather than part of it.
 
-Everything that needs a user is behind `SessionMiddleware`; missing, invalid, or
-expired sessions return `401`, and a rotated token is re-issued on the response
-automatically. OAuth providers only appear on the sign-in page when their env
-vars are set. Enable any provider by adding its credentials to `.env` — see the
-[provider notes](#oauth-providers) below.
+**Rules are stated structurally.** A label carries `what` it means, what it is
+`notFor`, and worked `examples`, and the row state is decomposed rather than
+dumped as one blob. Sending Jev one flat blob of criteria left one in four
+decisions unanswerable; decomposing it and adding the `notFor` branch cut that
+to one in fourteen.
 
-The auth group is served under `/api/auth/*`:
+## Accuracy
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/auth/email-code` | Request a sign-in code (rate-limited) |
-| `POST` | `/auth/email-code/verify` | Redeem a code, set the session cookie |
-| `GET` | `/auth/oauth/:provider/start` | Begin an OAuth flow (PKCE + state) |
-| `GET` | `/auth/oauth/:provider/callback` | Exchange the code, link, set the cookie |
-| `POST` | `/auth/signout` | Clear the session cookie, invalidate server-side |
-| `GET` | `/auth/me` | The current user (session required) |
-| `DELETE` | `/auth/me` | Delete the account and all auth data |
+An AI column is only useful if you can see how wrong it is. The **Report** tab
+shows three things: agreement between the model and your corrections, the
+distribution of confidence across rows, and a **random 25-row audit** — sampled
+without regard to confidence, and labelled in the UI as the only unbiased number
+on the page, because the other two are both selected by the model's own
+confidence.
 
-### Branding the sign-in email
-
-The sign-in-code email copy (from address, subject, body) is not hardcoded
-anywhere. The `Mailer` implementations render an `EmailCodeTemplate` service
-supplied by your app; `DefaultEmailCodeTemplate` provides a neutral fallback
-(`no-reply@example.com` / "Your sign-in code"). Brand it at the composition
-root:
-
-```ts
-import { EmailCodeTemplate } from "@app/auth"
-
-export const AppEmailCodeTemplate = Layer.succeed(EmailCodeTemplate, {
-  from: "Acme <no-reply@acme.com>",
-  subject: "Your Acme sign-in code",
-  text: (code) => `Your Acme sign-in code is ${code}.`
-})
-```
-
-Provide it alongside the auth layers (e.g.
-`Layer.provideMerge(AppEmailCodeTemplate)` where `AuthLive` is assembled). The
-Resend mailer sends exactly this copy; the logger mailer prints it to the
-terminal, so local development shows the same message your users receive.
-
-## Adding your first feature
-
-The `notes` package is the template — copy its shape. A new feature is a
-vertical slice across a domain package and the web app:
-
-1. **Domain package** — `packages/<feature>/`
-   - `src/db/models.ts` — a `Model.Class` for your table (branded id, typed
-     columns).
-   - `src/db/migrations.ts` — the migration, as an Effect program, merged into
-     the migrator by `scripts/migrate.ts`.
-   - `src/repo/*.repo.ts` — `Effect.fnUntraced` functions talking to Postgres
-     through `SqlClient` (no ORM).
-   - `src/schema/api.ts` — the API wire schemas.
-   - Tests alongside: `src/repo/*.repo.test.ts` using the shared test DB.
-2. **HTTP group** — `apps/web/src/api/<feature>.api.ts` declares endpoints
-   (guarded by `SessionMiddleware`), `<feature>.impl.ts` implements them with
-   `HttpApiBuilder.group`, and `<feature>.ts` is the typed client.
-3. **Route + page** — `apps/web/src/routes/<feature>.tsx` using the typed client
-   and the shadcn components.
-4. **API test** — `apps/web/src/api/<feature>.api.test.ts` builds the composed
-   router, signs in through the real flow, and asserts on the endpoints.
-
-Wire the group into `apps/web/src/api/web.api.ts` (one `addHttpApi` line), the
-impl into `mount.ts` (one `Layer.mergeAll` entry), and register any package
-migrations in `scripts/migrate.ts`.
-
-For docs that point at object storage, see `packages/documents` instead: a
-`Storage` seam (`Context.Service`) with an S3 backend under
-`src/storage/s3.ts` and an in-memory double under `src/storage/test.ts`. The
-`HttpApi` group presigns PUT/GET URLs and the confirm endpoint HEAD-verifies the
-object against the row before flipping `pending → stored`.
+Corrections are the signal that matters: they are stored per result, they
+override the model's value everywhere (grid, review, export), and they are what
+agreement is computed from.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `pnpm dev` | Run the web app (Turbo, `:3000`) |
+| `pnpm demo` | Infra up → migrate → run the app and worker (the whole thing) |
+| `pnpm dev` | Run the web app and worker only (Turbo, `:3000`) |
 | `pnpm build` | Type-check and build every package |
 | `pnpm test` | Run every package's Vitest suite |
 | `pnpm lint` | `tsc --noEmit` across the repo |
-| `pnpm migrate` | Apply app migrations, then the auth-schema migrations |
-| `pnpm setup:object-storage` | Configure CORS on the local Garage bucket (idempotent) |
+| `pnpm migrate` | Apply every package's migrations, auth schema first |
 | `pnpm --filter <pkg> <task>` | Target a single package |
-
-## Testing
-
-Vitest runs in every package. DB-backed tests use a dedicated `scaffold_test`
-database, created on demand and migrated in `beforeAll`
-(`packages/core/src/test-utils.ts` exports `setupTestDb` and `TestDbLayer`).
-
-The web API tests exercise the **real composed router** through a fetch-style
-bridge — sign-in via the actual email-code flow, then assertions against the
-session-protected endpoints. This mirrors the auth package's own test harness
-(`packages/auth/src/httpapi.test.ts`), which uses an in-memory `AuthStorage` and
-a fake OAuth HTTP client to keep the auth suite fast and hermetic.
-
-The documents API test drives the full upload flow against an in-memory
-`Storage` double; the real S3/Garage integration is covered by
-`packages/documents/src/storage/s3.storage.test.ts`, a round-trip test that
-presigns a PUT, uploads raw bytes, heads them, presigns a GET, and deletes. It
-runs when `STORAGE_*` env vars are set (Garage via `docker compose up -d`) and
-skips otherwise.
 
 ## Environment variables
 
-See `.env.example` for the full template.
+`.env.example` is the template. If `.env` is missing, `pnpm demo` creates it and stops,
+so you can add `JEV_KEY` before it runs for real.
 
 | Variable | Required | Purpose |
 | --- | --- | --- |
-| `DATABASE_URL` | yes | Postgres connection (Docker defaults work) |
-| `RESEND_API_KEY` | no | Email delivery; unset → codes print to terminal |
-| `GOOGLE_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI` | no | Enable Google OAuth |
-| `LINKEDIN_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI` | no | Enable LinkedIn OAuth |
-| `GITHUB_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI` | no | Enable GitHub OAuth |
-| `GITHUB_USER_AGENT` | no | User-Agent for GitHub's API (recommended) |
-| `STORAGE_ENDPOINT` | docs only | S3-compatible endpoint; Garage by default (`http://localhost:3900`) |
-| `STORAGE_REGION` | docs only | Region sent to the store (`garage` for Garage) |
-| `STORAGE_BUCKET` | docs only | Bucket name (`scaffold-documents`) |
-| `STORAGE_ACCESS_KEY_ID` | docs only | Access key for the bucket |
-| `STORAGE_SECRET_ACCESS_KEY` | docs only | Secret for the bucket |
-| `STORAGE_FORCE_PATH_STYLE` | docs only | `true` for Garage/MinIO, `false` for AWS S3 |
-| `MAX_DOCUMENT_SIZE_BYTES` | no | Document upload limit in bytes (default 5 GiB, S3's single-PUT ceiling). Larger values need multipart uploads |
+| `DATABASE_URL` | yes | Postgres. Note the host port is **5433** |
+| `JEV_KEY` | yes | TypeSafe API key. Everything else is pre-filled |
+| `REDIS_URL` | yes | Rate-limiter state. Provisioned by `docker compose` |
+| `BETTER_AUTH_SECRET` | yes | Session signing |
+| `BETTER_AUTH_URL` | yes | Base URL for auth callbacks |
+| `JEV_BASE_URL` / `JEV_MODEL` | no | Default to `https://api.typesafe.ai` / `jev-latest` |
+| `OPENAI_API_KEY` | no | Rule clarification only. Unset disables "Improve this"; the core loop never needs it |
+| `MAX_DATASET_SIZE_BYTES` | no | Upload cap, 50 MB |
+| `GOOGLE_*` | no | Optional OAuth provider |
 
-`STORAGE_*` are required only when the documents group is exercised (the storage
-layer fails at startup if they are absent). The `.env.example` / `docker-compose`
-values match the locally provisioned Garage bucket. In production, point the
-same vars at AWS S3 and set `STORAGE_FORCE_PATH_STYLE=false`.
+`STORAGE_*` and `pnpm setup:object-storage` configure an S3-compatible Garage
+bucket, but **nothing writes to it today** — `dataset.storage_key` is always
+null and rows live in Postgres. Treat that command as preparation, not setup.
 
-## OAuth providers
+## Testing
 
-Enable any provider by adding its credentials to `.env`. The redirect URIs
-(`http://localhost:3000/api/auth/oauth/<provider>/callback`) must be registered
-with the provider.
+Two suites run today: `packages/evaluate/src/core.test.ts` covers request
+building, response parsing and answer extraction; `packages/queue/src/scheduler.test.ts`
+covers the claim loop. `packages/core/src/test-utils.ts` provides a dedicated
+test database (created on demand, migrated in `beforeAll`) for the DB-backed
+domain suites, which are not yet written — that is the largest testing gap in
+the repo.
 
-| Provider | Env prefix | Notes |
-| --- | --- | --- |
-| Google | `GOOGLE_` | OIDC |
-| LinkedIn | `LINKEDIN_` | OIDC |
-| GitHub | `GITHUB_` | OAuth2; set `GITHUB_USER_AGENT` too (GitHub rejects the default) |
+## Status
+
+Built and working end to end: upload → column → preview → queued run → review →
+report → export, with extra questions per column and an adaptive rate limiter.
+
+Not built: composite columns that compose one value from several answers, saved
+and re-applied rules, speculative column suggestions, escalation and entity
+resolution, and CSV connectors. There is also **no foreign key** from `dataset`
+to better-auth's `user` table — ownership is enforced in every query, but the
+constraint is absent.
+
+`.scratch/semantic-spreadsheet/` holds the specification, the plan, and the
+measured evidence behind the numbers above.
 
 ## Docs & conventions
 
-- **Architecture decisions** live in
-  [`docs/architecture-decisions.md`](docs/architecture-decisions.md) (ADRs in
-  one file) — read the sections touching the area you're about to work in.
-- **Repository guidelines** for agents (and humans) are in
-  [`AGENTS.md`](AGENTS.md): Effect patterns, build/test/run commands, and the
-  agent-skill framework under `.agents/skills/`.
-- **Postgres is the source of truth** — raw SQL through Effect's Postgres layer,
-  no ORM. Migrations are Effect programs.
-- **Packages own their schema** — the auth package keeps its own `auth` schema
-  and journal, separate from application migrations, so it can be reused or
-  upgraded independently.
-- **The `HttpApi` contract is the single source of truth** — the server
-  implements it, the client is generated from it, and the tests exercise the
-  composed router through it.
+- [`docs/architecture-decisions.md`](docs/architecture-decisions.md) — ADRs.
+  Read the ones touching your area before you change it.
+- [`AGENTS.md`](AGENTS.md) — repository guidelines: Effect patterns, commands,
+  the agent-skill framework. **Its package list predates this product and still
+  describes the scaffold it was copied from.**
+- **Postgres is the source of truth.** Raw SQL through Effect's Postgres layer,
+  no ORM. Migrations are Effect programs, owned by the package whose schema they
+  describe.
+- **Never cast to reconcile a type-vs-runtime mismatch.** Rows are decoded
+  through the model's `Schema`; if a value's runtime shape differs from its
+  type, fix the boundary. The one sanctioned exception is documented inline in
+  `apps/web/src/api/mount.ts`.
 - **No comments unless they carry information the code does not.**
 
-## License
+## Provenance
 
-This is a scaffold for you to build on — copy it, rename it, and make it yours.
-No license file is shipped; choose one that fits your project if you publish
-it.
+Copied from `~/code/scaffold` without git history and repurposed. Not every
+inherited file has kept up: `CONTEXT.md`, `AGENTS.md`, and the ADR file still
+describe the scaffold's `notes` and `documents` demo domains, which no longer
+exist.
